@@ -25,10 +25,9 @@ env*/
 *.env
 
 # Data
-*.sqlite3
+*.sqlite
 *.db
 *.log
-*.csv
 *.tsv
 *.dat
 *.h5
