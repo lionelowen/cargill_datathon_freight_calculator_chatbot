@@ -1,0 +1,14 @@
+Vessel Name;DWT (MT);Hire Rate (USD/day);Warranted Speed (Laden/Ballast);Economical Speed(Laden/Ballast);Port Consumption (MGO);Voyage / Position Update
+;;;;;;(ETD = Estimated time of departure)
+ANN BELL;180,803;11,75;Laden: 13.5 kn / 60 mt VLSF + 2.0 mt MGO;Laden: 12.0 kn / 42 mt VLSF + 2.0 mt MGO;Idle: 2.0 mt VLSF / day;Discharging Qingdao, China – ETD 25 Feb 2026
+;;;Ballast: 14.5 kn / 55 mt VLSF + 2.0 mt MGO;Ballast: 12.5 kn / 38 mt VLSF + 2.0 mt MGO;Working: 3.0 mt VLSF / day;Bunker Remaining on Board 
+;;;;;;401.3 mt VLSF / 45.1 mt MGO
+OCEAN HORIZON;181,55;15,75;Laden: 13.8 kn / 61 mt VLSF + 1.8 mt MGO;Laden: 12.3 kn / 43.0 mt VLSF + 1.8 mt MGO;Idle: 1.8 mt VLSF / day;Discharging Map Ta Phut, Thailand – ETD 1 Mar 2026
+;;;Ballast: 14.8 kn / 56.5 mt VLSF + 1.8 mt MGO;Ballast: 12.8 kn / 39.5 mt VLSF + 1.8 mt MGO;Working: 3.2 mt VLSF / day;Bunker Remaining on Board 
+;;;;;;265.8 mt VLSF / 64.3 mt MGO
+PACIFIC GLORY;182,32;14,8;Laden: 13.5 kn / 59 mt VLSF + 1.9 mt MGO;Laden: 12.2 kn / 44 mt VLSF + 1.9 mt MGO;Idle: 2.0 mt VLSF / day;Discharging Gwangyang, S. Korea – ETD 10 Mar 2026 
+;;;Ballast: 14.2 kn / 54 mt VLSF + 1.9 mt MGO;Ballast: 12.7 kn / 40 mt VLSF + 1.9 mt MGO;Working: 3.0 mt VLSF / day;Bunker Remaining on Board 
+;;;;;;601.9 mt VLSF / 98.1 mt MGO
+GOLDEN ASCENT;179,965;13,95;Laden: 13.0 kn / 58 mt VLSF + 2.0 mt MGO;Laden: 11.8 kn / 41 mt VLSF + 2.0 mt MGO;Idle: 1.9 mt VLSF / day;Discharging Fangcheng, China – ETD 8 Mar 2026
+;;;Ballast: 14.0 kn / 53 mt VLSF + 2.0 mt MGO;Ballast: 12.3 kn / 37 mt VLSF + 2.0 mt MGO;Working: 3.1 mt VLSF / day;Bunker Remaining on Board 
+;;;;;;793.3 mt VLSF / 17.1 mt MGO
