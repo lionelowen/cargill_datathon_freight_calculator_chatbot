@@ -1,8 +1,14 @@
 from dataclasses import dataclass, asdict
+import pandas as pd
 
 # ----------------------------
 # Inputs (change these anytime)
 # ----------------------------
+
+import pandas as pd
+
+from pathlib import Path
+import pandas as pd
 
 @dataclass
 class Vessel:
@@ -172,3 +178,8 @@ if __name__ == "__main__":
     ]
     for k in keys:
         print(f"{k:15s}: {out[k]:,.4f}")
+
+
+   
+
+    
