@@ -138,6 +138,10 @@ class Cargo:
     earliest_date: pd.Timestamp | None = None
     latest_date: pd.Timestamp | None = None
 
+    # For alternative discharge ports (same TCE basis)
+    base_cargo_id: str = ""  # links alternative port options to same cargo
+    alt_port_index: int = 0   # 0 = primary, 1+ = alternatives
+
 
 @dataclass
 class Voyage:
@@ -447,6 +451,11 @@ def load_cargoes_from_excel(cargo_xlsx: Path, tag: str) -> list[Cargo]:
     df["load_port"] = df["load_port"].map(_norm_port)
     df["discharge_port1"] = df["discharge_port1"].map(_norm_port)
 
+    # Check for alternative discharge ports (discharge_port2, discharge_port3, etc.)
+    alt_port_cols = [c for c in df.columns if c.startswith("discharge_port") and c != "discharge_port1"]
+    for col in alt_port_cols:
+        df[col] = df[col].map(_norm_port)
+
     # laycan columns (if present)
     if "earliest_date" in df.columns:
         df["earliest_date"] = pd.to_datetime(df["earliest_date"], errors="coerce")
@@ -465,7 +474,7 @@ def load_cargoes_from_excel(cargo_xlsx: Path, tag: str) -> list[Cargo]:
 
     cargoes: list[Cargo] = []
     for i, r in df.iterrows():
-        nm = f"{tag}_{r.get('customer','CUST')}_{r.get('commodity','CARGO')}_{i}"
+        base_id = f"{tag}_{r.get('customer','CUST')}_{r.get('commodity','CARGO')}_{i}"
 
         qty = float(r["qty_mt"]) if pd.notna(r.get("qty_mt")) else np.nan
         fr = float(r["freight_rate"]) if pd.notna(r.get("freight_rate")) else np.nan
@@ -486,32 +495,47 @@ def load_cargoes_from_excel(cargo_xlsx: Path, tag: str) -> list[Cargo]:
         else:
             port_cost = float(str(port_cost_raw).replace(",", "").replace("USD", "").strip() or 0.0)
 
-        cargoes.append(
-            Cargo(
-                name=nm,
-                cargo_qty=qty,
-                stow_factor=1.33,
+        # Collect all discharge ports (primary + alternatives)
+        discharge_ports = [r["discharge_port1"]]
+        for col in alt_port_cols:
+            port = r.get(col, "")
+            if port and isinstance(port, str) and port.strip():
+                discharge_ports.append(port)
 
-                freight=fr,
-                address_coms=charterer,
-                broker_coms=broker,
+        # Create a Cargo object for each discharge port option
+        for port_idx, dis_port in enumerate(discharge_ports):
+            if not dis_port:  # skip empty
+                continue
+            nm = f"{base_id}" if port_idx == 0 else f"{base_id}_ALT{port_idx}"
+            cargoes.append(
+                Cargo(
+                    name=nm,
+                    cargo_qty=qty,
+                    stow_factor=1.33,
 
-                load_rate=load_rate,
-                dis_rate=dis_rate,
+                    freight=fr,
+                    address_coms=charterer,
+                    broker_coms=broker,
 
-                loadport_tt=load_tt,
-                disport_tt=dis_tt,
-                port_idle=0.5,
+                    load_rate=load_rate,
+                    dis_rate=dis_rate,
 
-                ballast_bonus=0.0,
+                    loadport_tt=load_tt,
+                    disport_tt=dis_tt,
+                    port_idle=0.5,
 
-                load_port=r["load_port"],
-                discharge_port=r["discharge_port1"],
-                total_port_cost=port_cost,
-                earliest_date=r["earliest_date"] if pd.notna(r["earliest_date"]) else None,
-                latest_date=r["latest_date"] if pd.notna(r["latest_date"]) else None,
+                    ballast_bonus=0.0,
+
+                    load_port=r["load_port"],
+                    discharge_port=dis_port,
+                    total_port_cost=port_cost,
+                    earliest_date=r["earliest_date"] if pd.notna(r["earliest_date"]) else None,
+                    latest_date=r["latest_date"] if pd.notna(r["latest_date"]) else None,
+
+                    base_cargo_id=base_id,
+                    alt_port_index=port_idx,
+                )
             )
-        )
 
     return cargoes
 
@@ -578,9 +602,14 @@ def calc(v: Vessel, c: Cargo, voy: Voyage, pf: PricesAndFees) -> dict:
     if any(pd.isna(x) for x in [revenue, hire_net, bunker_expense, misc_expense]):
         profit_loss = np.nan
 
+    # TCE (Time Charter Equivalent) = (Revenue - Voyage Costs) / Duration
+    voyage_costs = bunker_expense + misc_expense
+    tce = (revenue - voyage_costs) / total_duration if total_duration > 0 else 0.0
+
     return {
         "vessel": v.name,
         "cargo": c.name,
+        "base_cargo_id": c.base_cargo_id or c.name,
         "from_pos": v.position,
         "load_port": c.load_port,
         "discharge_port": c.discharge_port,
@@ -595,6 +624,7 @@ def calc(v: Vessel, c: Cargo, voy: Voyage, pf: PricesAndFees) -> dict:
         "bunker_expense": bunker_expense,
         "misc_expense": misc_expense,
         "profit_loss": profit_loss,
+        "tce": tce,
     }
 
 
@@ -654,7 +684,7 @@ def build_profit_table(
 def optimal_committed_assignment(df_cv_cc: pd.DataFrame, df_mv_cc: pd.DataFrame) -> tuple[pd.DataFrame, float]:
     """
     Maximise total P/L for committed cargoes:
-    - each committed cargo assigned exactly once
+    - each BASE cargo assigned exactly once (can pick any discharge port option)
     - each vessel used at most once
     """
     a = df_cv_cc.copy()
@@ -666,15 +696,17 @@ def optimal_committed_assignment(df_cv_cc: pd.DataFrame, df_mv_cc: pd.DataFrame)
     if len(cand) == 0:
         raise ValueError("No feasible combos for committed cargoes. Check distances / port matching / laycan filter.")
 
-    cargos = sorted(cand["cargo"].unique().tolist())
-    opts = {c: cand[cand["cargo"] == c].to_dict("records") for c in cargos}
-    for c in cargos:
+    # Use base_cargo_id to group alternative ports together
+    # Each base cargo should be assigned exactly once (any port option)
+    base_cargos = sorted(cand["base_cargo_id"].unique().tolist())
+    opts = {c: cand[cand["base_cargo_id"] == c].to_dict("records") for c in base_cargos}
+    for c in base_cargos:
         if len(opts[c]) == 0:
             raise ValueError(f"No feasible vessel found for committed cargo: {c}")
 
     best_choice, best_total = None, -float("inf")
 
-    for choice in itertools.product(*(opts[c] for c in cargos)):
+    for choice in itertools.product(*(opts[c] for c in base_cargos)):
         used = set()
         ok = True
         total = 0.0
@@ -696,9 +728,9 @@ def optimal_committed_assignment(df_cv_cc: pd.DataFrame, df_mv_cc: pd.DataFrame)
             best_choice = choice
 
     assign_df = pd.DataFrame(best_choice)
-    cols = ["cargo", "vessel_type", "vessel", "profit_loss", "total_duration", "ballast_nm", "laden_nm", "eta_load"]
+    cols = ["base_cargo_id", "cargo", "discharge_port", "vessel_type", "vessel", "profit_loss", "tce", "total_duration", "ballast_nm", "laden_nm", "eta_load"]
     cols = [c for c in cols if c in assign_df.columns]
-    assign_df = assign_df[cols].sort_values("cargo").reset_index(drop=True)
+    assign_df = assign_df[cols].sort_values("base_cargo_id").reset_index(drop=True)
 
     return assign_df, best_total
 
@@ -754,6 +786,62 @@ def unused_committed_vessel_penalty(cargill_vessels, used_cargill: set[str], idl
         if v.name not in used_cargill:
             penalty += (v.daily_hire * idle_days) * (1 - v.adcoms)
     return penalty
+
+
+def compare_alt_discharge_ports(df: pd.DataFrame, tolerance_pct: float = 0.02, show_all: bool = False) -> pd.DataFrame:
+    """
+    Compare alternative discharge ports for the same base cargo.
+    Returns only the BEST port option per cargo (or all if show_all=True).
+    
+    Args:
+        df: profit table with base_cargo_id, discharge_port, tce columns
+        tolerance_pct: e.g. 0.02 = 2% tolerance
+        show_all: if True, show all options with comparison; if False, show only optimal
+    
+    Returns:
+        DataFrame with discharge port comparison
+    """
+    if df is None or len(df) == 0 or "base_cargo_id" not in df.columns:
+        return pd.DataFrame()
+    
+    # Group by vessel + base_cargo_id to compare port options
+    results = []
+    
+    for (vessel, base_id), grp in df.groupby(["vessel", "base_cargo_id"]):
+        if len(grp) <= 1:
+            # No alternatives for this cargo - skip
+            continue
+        
+        # Sort by TCE descending
+        grp_sorted = grp.sort_values("tce", ascending=False).reset_index(drop=True)
+        best_tce = grp_sorted.iloc[0]["tce"]
+        
+        for idx, row in grp_sorted.iterrows():
+            tce = row["tce"]
+            tce_diff_pct = (best_tce - tce) / best_tce if best_tce != 0 else 0
+            within_tolerance = tce_diff_pct <= tolerance_pct
+            
+            # Only include best option (or all if show_all=True)
+            if not show_all and idx > 0:
+                continue
+            
+            results.append({
+                "vessel": vessel,
+                "base_cargo_id": base_id,
+                "discharge_port": row["discharge_port"],
+                "laden_nm": row["laden_nm"],
+                "total_duration": round(row["total_duration"], 2),
+                "profit_loss": round(row["profit_loss"], 2),
+                "tce": round(tce, 2),
+                "best_tce": round(best_tce, 2),
+                "tce_diff_%": round(tce_diff_pct * 100, 2),
+                "within_2%": "✓" if within_tolerance else "",
+            })
+    
+    if not results:
+        return pd.DataFrame()
+    
+    return pd.DataFrame(results).sort_values(["vessel", "base_cargo_id", "tce"], ascending=[True, True, False])
 
 
 # ============================================================
@@ -867,12 +955,24 @@ if __name__ == "__main__":
     else:
         print("\nCannot compute optimal plan (one of the committed tables is empty). Check distances / port matching / laycan filter.")
 
-    # 9) save outputs
+    # 9) Compare alternative discharge ports (TCE with 2% tolerance)
+    print("\n==============================")
+    print("ALTERNATIVE DISCHARGE PORT COMPARISON (2% TCE tolerance)")
+    print("==============================")
+    alt_port_comparison = compare_alt_discharge_ports(df_cv_cc, tolerance_pct=0.02, show_all=True)
+    if len(alt_port_comparison) > 0:
+        print(alt_port_comparison.to_string(index=False))
+    else:
+        print("No alternative discharge ports to compare.")
+
+    # 10) save outputs
     OUT_DIR = BASE_DIR / "outputs"
     OUT_DIR.mkdir(exist_ok=True)
 
     df_cv_cc.to_csv(OUT_DIR / "cargill_vs_committed.csv", index=False)
     df_cv_mc.to_csv(OUT_DIR / "cargill_vs_marketcargo.csv", index=False)
     df_mv_cc.to_csv(OUT_DIR / "marketvs_committed.csv", index=False)
+    if len(alt_port_comparison) > 0:
+        alt_port_comparison.to_csv(OUT_DIR / "alt_port_comparison.csv", index=False)
 
     print(f"\nSaved CSV outputs to: {OUT_DIR}")
