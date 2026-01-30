@@ -1,17 +1,17 @@
 # coba.py
 # ============================================================
 # FULL VERSION (includes everything in one file)
-# ✅ Fixes:
+# Fixes:
 #   1) Cargill hire_rate conversion (11.75 -> 11,750/day) when < 1000
 #   2) Better default for port_mgo_per_day (use 2.0 instead of 0.1)
 #   3) Safe handling if a vessel is missing BALLAST/LADEN row (skip instead of crash)
-#   4) ✅ Better port normalisation (accents + aliases) to reduce distance mismatches
-#   5) ✅ Time handling: laycan filter using vessel estimate_time_of_departure + ETA(load)
-# ✅ Adds:
+#   4) Better port normalisation (accents + aliases) to reduce distance mismatches
+#   5) Time handling: laycan filter using vessel estimate_time_of_departure + ETA(load)
+# Adds:
 #   6) Optimal assignment for ALL committed cargoes (3 cargos) using Cargill + Market vessels
 #   7) Optional: assign MARKET cargo to UNUSED Cargill vessels (1 cargo per vessel, no cargo reused)
-#   8) ✅ Print mismatches (distance lookup fail) clearly (BAL / LAD)
-#   9) ✅ Print NaN profit rows for debugging
+#   8) Print mismatches (distance lookup fail) clearly (BAL / LAD)
+#   9) Print NaN profit rows for debugging
 # ============================================================
 
 from __future__ import annotations
@@ -629,7 +629,7 @@ def calc(v: Vessel, c: Cargo, voy: Voyage, pf: PricesAndFees) -> dict:
 
 
 # ============================================================
-# Build combinations table (✅ with laycan time filter)
+# Build combinations table (with laycan time filter)
 # ============================================================
 def build_profit_table(
     vessels: list[Vessel],
@@ -651,7 +651,7 @@ def build_profit_table(
             except KeyError:
                 continue
 
-            # ✅ laycan filter based on ETA at load port
+            # laycan filter based on ETA at load port
             if enforce_laycan and v_dep is not None:
                 dur_ballast_days = ballast_nm / (v.sp_ballast * 24.0)
                 eta_load = v_dep + pd.Timedelta(days=float(dur_ballast_days))
@@ -835,7 +835,7 @@ def compare_alt_discharge_ports(df: pd.DataFrame, tolerance_pct: float = 0.02, s
                 "tce": round(tce, 2),
                 "best_tce": round(best_tce, 2),
                 "tce_diff_%": round(tce_diff_pct * 100, 2),
-                "within_2%": "✓" if within_tolerance else "",
+                "within_2%": "YES" if within_tolerance else "NO",
             })
     
     if not results:
@@ -884,12 +884,12 @@ if __name__ == "__main__":
     committed = load_cargoes_from_excel(COMMITTED_CARGO_XLSX, tag="COMMITTED")
     market_cargoes = load_cargoes_from_excel(MARKET_CARGO_XLSX, tag="MARKET")
 
-    # ✅ print distance mismatches
+    # print distance mismatches
     #print_distance_mismatches(cargill_vessels, committed, dist_lut, "CARGILL x COMMITTED")
     #print_distance_mismatches(market_vessels, committed, dist_lut, "MARKET x COMMITTED")
     #....print_distance_mismatches(cargill_vessels, market_cargoes, dist_lut, "CARGILL x MARKET")
 
-    # 6) build profit tables (✅ enforce laycan)
+    # 6) build profit tables (enforce laycan)
     df_cv_cc = build_profit_table(cargill_vessels, committed, dist_lut, pf, bunker_days=1.0, enforce_laycan=True)
     df_cv_mc = build_profit_table(cargill_vessels, market_cargoes, dist_lut, pf, bunker_days=1.0, enforce_laycan=True)
     df_mv_cc = build_profit_table(market_vessels, committed, dist_lut, pf, bunker_days=1.0, enforce_laycan=True)
@@ -907,7 +907,7 @@ if __name__ == "__main__":
     print(df_mv_cc.head(10)[["vessel", "cargo", "profit_loss", "total_duration", "ballast_nm", "laden_nm", "eta_load"]]
           if len(df_mv_cc) else "No rows.")
 
-    # ✅ print NaN profit rows
+    # print NaN profit rows
     print_nan_profit_rows(df_cv_cc, "CARGILL x COMMITTED")
     print_nan_profit_rows(df_cv_mc, "CARGILL x MARKET")
     print_nan_profit_rows(df_mv_cc, "MARKET x COMMITTED")
