@@ -147,6 +147,7 @@ class PricesAndFees:
     ifo_price: float = 440
     mdo_price: float = 850
 
+    ## insurance, survey etc. (fixed per-voyage fees)
     awrp: float = 1500
     cev: float = 1500
     ilhoc: float = 5000
@@ -170,13 +171,19 @@ def load_distance_lookup(dist_xlsx: Path) -> dict[tuple[str, str], float]:
         lut[(a, b)] = d
         lut[(b, a)] = d
     return lut
+## return value{
+## ("SINGAPORE", "QINGDAO"): 2500.0,
+##  ("QINGDAO", "SINGAPORE"): 2500.0
 
 
+
+## return distance
 def dist_nm(lut: dict, a: str, b: str) -> float:
     a, b = _norm_port(a), _norm_port(b)
     if (a, b) in lut:
         return float(lut[(a, b)])
     raise KeyError(f"Distance not found for {a} -> {b}")
+
 
 
 # ============================================================
@@ -237,6 +244,8 @@ def print_nan_profit_rows(df: pd.DataFrame, title=""):
 # ============================================================
 # Bunker prices
 # ============================================================
+
+#using bunker file to look for fuel prices
 def load_bunker_prices(bunker_xlsx: Path, location="Singapore", month_col="cal") -> tuple[float, float]:
     df = pd.read_excel(bunker_xlsx, sheet_name=0)
     df["location"] = df["location"].astype(str).str.strip().str.upper()
@@ -257,11 +266,14 @@ def load_ffa(ffa_xlsx: Path) -> pd.DataFrame:
     return ffa
 
 
+#
 def _find_5tc_row(ffa: pd.DataFrame) -> pd.Series:
     m = ffa["Route"].str.contains("5TC", case=False, na=False)
     if not m.any():
         raise KeyError("Cannot find a 5TC row in ffa_report.xlsx (column 'Route').")
     return ffa.loc[m].iloc[0]
+    # filtering row and give the first encountered row
+
 
 
 def ffa_5tc_usd_per_day(ffa: pd.DataFrame, dep: pd.Timestamp | None) -> float:
@@ -270,40 +282,52 @@ def ffa_5tc_usd_per_day(ffa: pd.DataFrame, dep: pd.Timestamp | None) -> float:
     monthly_cols = [c for c in ffa.columns if isinstance(c, pd.Timestamp)]
     monthly_cols = sorted(monthly_cols)
 
+    rate = None
+
     if dep is not None and pd.notna(dep) and monthly_cols:
         dep = pd.Timestamp(dep)
         month_key = pd.Timestamp(dep.year, dep.month, 1)
 
         if month_key in monthly_cols and pd.notna(row[month_key]):
-            return float(row[month_key])
+            rate = float(row[month_key])
+        else:
+            earlier = [c for c in monthly_cols if c <= dep and pd.notna(row[c])]
+            later = [c for c in monthly_cols if c >= dep and pd.notna(row[c])]
+            if earlier and later:
+                a = max(earlier)
+                b = min(later)
+                if a == b:
+                    rate = float(row[a])
+                else:
+                    ra, rb = float(row[a]), float(row[b])
+                    w = (dep - a) / (b - a)
+                    rate = ra + float(w) * (rb - ra)
 
-        earlier = [c for c in monthly_cols if c <= dep and pd.notna(row[c])]
-        later = [c for c in monthly_cols if c >= dep and pd.notna(row[c])]
-        if earlier and later:
-            a = max(earlier)
-            b = min(later)
-            if a == b:
-                return float(row[a])
-            ra, rb = float(row[a]), float(row[b])
-            w = (dep - a) / (b - a)
-            return ra + float(w) * (rb - ra)
-
-    if dep is not None and pd.notna(dep):
+    if rate is None and dep is not None and pd.notna(dep):
         q = (int(dep.month) - 1) // 3 + 1
         qcol = f"Q{q} {str(dep.year)[-2:]}"
         if qcol in ffa.columns and pd.notna(row[qcol]):
-            return float(row[qcol])
+            rate = float(row[qcol])
+        else:
+            calcol = f"Cal {str(dep.year)[-2:]}"
+            if calcol in ffa.columns and pd.notna(row[calcol]):
+                rate = float(row[calcol])
 
-        calcol = f"Cal {str(dep.year)[-2:]}"
-        if calcol in ffa.columns and pd.notna(row[calcol]):
-            return float(row[calcol])
+    if rate is None:
+        cal_cols = [c for c in ffa.columns if isinstance(c, str) and c.strip().lower().startswith("cal")]
+        for c in cal_cols:
+            if pd.notna(row[c]):
+                rate = float(row[c])
+                break
 
-    cal_cols = [c for c in ffa.columns if isinstance(c, str) and c.strip().lower().startswith("cal")]
-    for c in cal_cols:
-        if pd.notna(row[c]):
-            return float(row[c])
+    if rate is None:
+        raise ValueError("Could not derive 5TC hire from FFA table.")
 
-    raise ValueError("Could not derive 5TC hire from FFA table.")
+    # Convert rate from thousands to actual USD/day (14.157 -> 14,157)
+    if rate < 1000:
+        rate = rate * 1000
+
+    return rate
 
 
 # ============================================================
@@ -334,7 +358,11 @@ def load_vessels_from_excel(
         dep = first["estimate_time_of_departure"]
 
         dwt_val = float(first["dwt"])
-        dwt = dwt_val 
+        # Convert DWT from thousands to actual MT (180.803 -> 180,803)
+        if dwt_val < 1000:
+            dwt = dwt_val * 1000
+        else:
+            dwt = dwt_val
 
         gb_df = g[g["movement"] == "BALLAST"]
         gl_df = g[g["movement"] == "LADEN"]
@@ -356,8 +384,9 @@ def load_vessels_from_excel(
         else:
             if "hire_rate" in df.columns and pd.notna(first.get("hire_rate", np.nan)):
                 hire = float(first["hire_rate"])
-               
-                
+                # Convert hire_rate from thousands to actual USD/day (11.75 -> 11,750)
+                if hire < 1000:
+                    hire = hire * 1000
             else:
                 hire = 0.0
 
@@ -383,7 +412,7 @@ def load_vessels_from_excel(
 
                 daily_hire=float(hire),
                 adcoms=0.0375,
-
+                # why adcoms 3.75%? standard
                 position=_norm_port(first["voyage_position"]),
                 time_of_departure=dep if pd.notna(dep) else None,
             )
@@ -485,7 +514,8 @@ def calc(v: Vessel, c: Cargo, voy: Voyage, pf: PricesAndFees) -> dict:
     total_duration = (dur_ballast_days + dur_laden_days) + voy.bunker_days + loadport_days + disport_days
 
     # revenue
-    loaded_qty = min(v.grain_capacity_cbm / c.stow_factor, c.cargo_qty)
+    # Use DWT as the vessel's cargo capacity constraint instead of grain_capacity_cbm
+    loaded_qty = min(v.dwt, c.cargo_qty)
     revenue = loaded_qty * c.freight * (1 - c.address_coms - c.broker_coms)
 
     # hire
@@ -685,6 +715,18 @@ def assign_market_cargo_to_unused_cargill(df_cv_mc: pd.DataFrame, used_cargill: 
     return out, float(out["profit_loss"].sum())
 
 
+def unused_committed_vessel_penalty(cargill_vessels, used_cargill: set[str], idle_days: float = 1.0) -> float:
+    """
+    Cost for committed vessels even if not used.
+    idle_days = how many days you assume you must pay when unused.
+    """
+    penalty = 0.0
+    for v in cargill_vessels:
+        if v.name not in used_cargill:
+            penalty += (v.daily_hire * idle_days) * (1 - v.adcoms)
+    return penalty
+
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -719,9 +761,9 @@ if __name__ == "__main__":
     market_cargoes = load_cargoes_from_excel(MARKET_CARGO_XLSX, tag="MARKET")
 
     # ✅ print distance mismatches
-    print_distance_mismatches(cargill_vessels, committed, dist_lut, "CARGILL x COMMITTED")
-    print_distance_mismatches(market_vessels, committed, dist_lut, "MARKET x COMMITTED")
-    print_distance_mismatches(cargill_vessels, market_cargoes, dist_lut, "CARGILL x MARKET")
+    #print_distance_mismatches(cargill_vessels, committed, dist_lut, "CARGILL x COMMITTED")
+    #print_distance_mismatches(market_vessels, committed, dist_lut, "MARKET x COMMITTED")
+    #....print_distance_mismatches(cargill_vessels, market_cargoes, dist_lut, "CARGILL x MARKET")
 
     # 6) build profit tables (✅ enforce laycan)
     df_cv_cc = build_profit_table(cargill_vessels, committed, dist_lut, pf, bunker_days=1.0, enforce_laycan=True)
@@ -780,6 +822,12 @@ if __name__ == "__main__":
         print("\n==============================")
         print(f"PORTFOLIO TOTAL P/L: {portfolio_total:,.2f}")
         print("==============================")
+
+        # Calculate penalty for unused committed vessels
+        penalty = unused_committed_vessel_penalty(cargill_vessels, used_cargill, idle_days=1.0)
+        portfolio_total_after_penalty = commit_total + market_total - penalty
+        print(f"\nUnused committed vessel penalty: {penalty:,.2f}")
+        print(f"PORTFOLIO TOTAL P/L (after penalty): {portfolio_total_after_penalty:,.2f}")
     else:
         print("\nCannot compute optimal plan (one of the committed tables is empty). Check distances / port matching / laycan filter.")
 
@@ -792,21 +840,3 @@ if __name__ == "__main__":
     df_mv_cc.to_csv(OUT_DIR / "marketvs_committed.csv", index=False)
 
     print(f"\nSaved CSV outputs to: {OUT_DIR}")
-
-def unused_committed_vessel_penalty(cargill_vessels, used_cargill: set[str], idle_days: float = 1.0) -> float:
-    """
-    Cost for committed vessels even if not used.
-    idle_days = how many days you assume you must pay when unused.
-    """
-    penalty = 0.0
-    for v in cargill_vessels:
-        if v.name not in used_cargill:
-            penalty += (v.daily_hire * idle_days) * (1 - v.adcoms)
-    return penalty
-
-# after computing used_cargill and commit_total/market_total:
-penalty = unused_committed_vessel_penalty(cargill_vessels, used_cargill, idle_days=1.0)
-portfolio_total = commit_total + market_total - penalty
-
-print(f"\nUnused committed vessel penalty: {penalty:,.2f}")
-print(f"PORTFOLIO TOTAL P/L (after penalty): {portfolio_total:,.2f}")

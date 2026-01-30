@@ -1,0 +1,2 @@
+vessel,cargo,from_pos,load_port,discharge_port,ballast_nm,laden_nm,dur_ballast_days,dur_laden_days,total_duration,loaded_qty,revenue,hire_net,bunker_expense,misc_expense,profit_loss,eta_load
+GOLDEN ASCENT,MARKET_Rio Tinto_Iron Ore_0,FANGCHENG,DAMPIER,QINGDAO,2681.08,3331.2,9.082249322493224,11.762711864406777,31.63662785356667,170000.0,,424781.047611358,450224.21639738634,249500.0,,2026-03-17 01:58:26.341463414
