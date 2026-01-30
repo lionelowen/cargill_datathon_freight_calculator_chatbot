@@ -108,6 +108,10 @@ class Vessel:
     position: str = ""
     time_of_departure: pd.Timestamp | None = None
 
+    # Remaining fuel onboard (MT)
+    ifo_remaining: float = 0.0
+    mdo_remaining: float = 0.0
+
 
 @dataclass
 class Cargo:
@@ -146,6 +150,10 @@ class Voyage:
 class PricesAndFees:
     ifo_price: float = 440
     mdo_price: float = 850
+
+    # Previous month prices (for remaining fuel valuation)
+    ifo_price_prev: float = 440
+    mdo_price_prev: float = 850
 
     ## insurance, survey etc. (fixed per-voyage fees)
     awrp: float = 1500
@@ -246,15 +254,20 @@ def print_nan_profit_rows(df: pd.DataFrame, title=""):
 # ============================================================
 
 #using bunker file to look for fuel prices
-def load_bunker_prices(bunker_xlsx: Path, location="Singapore", month_col="cal") -> tuple[float, float]:
+def load_bunker_prices(bunker_xlsx: Path, location="Singapore", month_col="cal", prev_month_col="cal") -> tuple[float, float, float, float]:
+    """
+    Returns (vlsfo_current, mgo_current, vlsfo_prev, mgo_prev)
+    """
     df = pd.read_excel(bunker_xlsx, sheet_name=0)
     df["location"] = df["location"].astype(str).str.strip().str.upper()
     df["type"] = df["type"].astype(str).str.strip().str.upper()
 
     loc = location.strip().upper()
-    vlsfo = df.loc[(df["location"] == loc) & (df["type"].isin(["VLSFO", "LSFO", "IFO"])), month_col].iloc[0]
-    mgo = df.loc[(df["location"] == loc) & (df["type"].isin(["MGO", "MDO"])), month_col].iloc[0]
-    return float(vlsfo), float(mgo)
+    vlsfo_curr = df.loc[(df["location"] == loc) & (df["type"].isin(["VLSFO", "LSFO", "IFO"])), month_col].iloc[0]
+    mgo_curr = df.loc[(df["location"] == loc) & (df["type"].isin(["MGO", "MDO"])), month_col].iloc[0]
+    vlsfo_prev = df.loc[(df["location"] == loc) & (df["type"].isin(["VLSFO", "LSFO", "IFO"])), prev_month_col].iloc[0]
+    mgo_prev = df.loc[(df["location"] == loc) & (df["type"].isin(["MGO", "MDO"])), prev_month_col].iloc[0]
+    return float(vlsfo_curr), float(mgo_curr), float(vlsfo_prev), float(mgo_prev)
 
 
 # ============================================================
@@ -415,6 +428,10 @@ def load_vessels_from_excel(
                 # why adcoms 3.75%? standard
                 position=_norm_port(first["voyage_position"]),
                 time_of_departure=dep if pd.notna(dep) else None,
+
+                # Remaining fuel onboard (MT)
+                ifo_remaining=float(first.get("vslf_remaining", 0) or 0),
+                mdo_remaining=float(first.get("mgo_remaining", 0) or 0),
             )
         )
 
@@ -532,8 +549,20 @@ def calc(v: Vessel, c: Cargo, voy: Voyage, pf: PricesAndFees) -> dict:
     total_ifo = ifo_sea + ifo_port
     total_mdo = mdo_sea + mdo_port
 
-    # bunker expense
-    bunker_expense = total_ifo * pf.ifo_price + total_mdo * pf.mdo_price
+    # bunker expense: remaining fuel at prev month price + additional fuel at current price
+    # IFO expense
+    if total_ifo <= v.ifo_remaining:
+        ifo_expense = total_ifo * pf.ifo_price_prev
+    else:
+        ifo_expense = v.ifo_remaining * pf.ifo_price_prev + (total_ifo - v.ifo_remaining) * pf.ifo_price
+    
+    # MDO expense
+    if total_mdo <= v.mdo_remaining:
+        mdo_expense = total_mdo * pf.mdo_price_prev
+    else:
+        mdo_expense = v.mdo_remaining * pf.mdo_price_prev + (total_mdo - v.mdo_remaining) * pf.mdo_price
+    
+    bunker_expense = ifo_expense + mdo_expense
 
     # misc expense
     bunker_da = pf.bunker_da_per_day * voy.bunker_days
@@ -734,9 +763,16 @@ if __name__ == "__main__":
     # 1) lookups
     dist_lut = load_distance_lookup(DIST_XLSX)
 
-    # 2) bunker prices (Singapore / "cal")
-    vlsfo_price, mgo_price = load_bunker_prices(BUNKER_XLSX, location="Singapore", month_col="cal")
-    pf = PricesAndFees(ifo_price=vlsfo_price, mdo_price=mgo_price)
+    # 2) bunker prices (Singapore): current month (mar) and previous month (feb)
+    vlsfo_price, mgo_price, vlsfo_prev, mgo_prev = load_bunker_prices(
+        BUNKER_XLSX, location="Singapore", month_col="mar", prev_month_col="feb"
+    )
+    pf = PricesAndFees(
+        ifo_price=vlsfo_price,
+        mdo_price=mgo_price,
+        ifo_price_prev=vlsfo_prev,
+        mdo_price_prev=mgo_prev,
+    )
 
     # 3) FFA
     ffa = load_ffa(FFA_REPORT_XLSX)
