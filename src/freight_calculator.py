@@ -327,6 +327,101 @@ def print_nan_profit_rows(df: pd.DataFrame, title=""):
 # Bunker prices
 # ============================================================
 
+# Port-to-bunker-location mapping (nearest bunkering hub)
+PORT_TO_BUNKER_HUB = {
+    # China ports -> Qingdao (or Shanghai)
+    "QINGDAO": "Qingdao",
+    "SHANGHAI": "Shanghai",
+    "FANGCHENG": "Qingdao",
+    "CAOFEIDIAN": "Qingdao",
+    "XIAMEN": "Shanghai",
+    "JINGTANG": "Qingdao",
+    "TIANJIN": "Qingdao",
+    "RIZHAO": "Qingdao",
+    "LIANYUNGANG": "Qingdao",
+    "NINGBO": "Shanghai",
+    "GUANGZHOU": "Shanghai",
+    
+    # Korea/Japan -> Singapore (or Qingdao)
+    "GWANGYANG": "Singapore",
+    "BUSAN": "Singapore",
+    "POHANG": "Singapore",
+    
+    # Southeast Asia -> Singapore
+    "SINGAPORE": "Singapore",
+    "MAP TA PHUT": "Singapore",
+    "TABONEO": "Singapore",
+    "TELUK RUBIAH": "Singapore",
+    
+    # India -> Singapore or Fujairah
+    "PARADIP": "Singapore",
+    "VIZAG": "Singapore",
+    "KANDLA": "Fujairah",
+    "MUNDRA": "Fujairah",
+    "KRISHNAPATNAM": "Singapore",
+    "MANGALORE": "Singapore",
+    "CHENNAI": "Singapore",
+    
+    # Middle East -> Fujairah
+    "FUJAIRAH": "Fujairah",
+    "JUBAIL": "Fujairah",
+    "JEBEL ALI": "Fujairah",
+    "RAS LAFFAN": "Fujairah",
+    
+    # Europe -> Rotterdam or Gibraltar
+    "ROTTERDAM": "Rotterdam",
+    "PORT TALBOT": "Rotterdam",
+    "AMSTERDAM": "Rotterdam",
+    "ANTWERP": "Rotterdam",
+    "DUNKIRK": "Rotterdam",
+    "GIBRALTAR": "Gibraltar",
+    
+    # West Africa -> Gibraltar or Port Louis
+    "KAMSAR": "Gibraltar",
+    "KAMSAR ANCHORAGE": "Gibraltar",
+    "CONAKRY": "Gibraltar",
+    
+    # South Africa -> Durban or Richards Bay
+    "DURBAN": "Durban",
+    "RICHARDS BAY": "Richards Bay",
+    "SALDANHA BAY": "Durban",
+    
+    # Brazil -> Gibraltar (transatlantic) or Durban (via Cape)
+    "TUBARAO": "Gibraltar",
+    "PONTA DA MADEIRA": "Gibraltar",
+    "ITAGUAI": "Gibraltar",
+    "SANTOS": "Gibraltar",
+    
+    # Australia -> Singapore
+    "PORT HEDLAND": "Singapore",
+    "DAMPIER": "Singapore",
+    "NEWCASTLE": "Singapore",
+    "HAY POINT": "Singapore",
+    
+    # Mauritius
+    "PORT LOUIS": "Port Louis",
+}
+
+
+def get_bunker_location_for_port(port: str, default: str = "Singapore") -> str:
+    """
+    Returns the nearest bunkering hub for a given port.
+    Falls back to default (Singapore) if port not found.
+    """
+    port_norm = _norm_port(port)
+    
+    # Direct match
+    if port_norm in PORT_TO_BUNKER_HUB:
+        return PORT_TO_BUNKER_HUB[port_norm]
+    
+    # Partial match (for ports like "PORT HEDLAND ANCHORAGE")
+    for key, hub in PORT_TO_BUNKER_HUB.items():
+        if key in port_norm or port_norm in key:
+            return hub
+    
+    return default
+
+
 #using bunker file to look for fuel prices
 def load_bunker_prices(bunker_xlsx: Path, location="Singapore", month_col="cal", prev_month_col="cal") -> tuple[float, float, float, float]:
     """
@@ -342,6 +437,30 @@ def load_bunker_prices(bunker_xlsx: Path, location="Singapore", month_col="cal",
     vlsfo_prev = df.loc[(df["location"] == loc) & (df["type"].isin(["VLSFO", "LSFO", "IFO"])), prev_month_col].iloc[0]
     mgo_prev = df.loc[(df["location"] == loc) & (df["type"].isin(["MGO", "MDO"])), prev_month_col].iloc[0]
     return float(vlsfo_curr), float(mgo_curr), float(vlsfo_prev), float(mgo_prev)
+
+
+def load_all_bunker_prices(bunker_xlsx: Path, month_col="cal", prev_month_col="cal") -> dict[str, tuple[float, float, float, float]]:
+    """
+    Load bunker prices for ALL locations.
+    Returns dict: {location: (vlsfo_curr, mgo_curr, vlsfo_prev, mgo_prev)}
+    """
+    df = pd.read_excel(bunker_xlsx, sheet_name=0)
+    df["location"] = df["location"].astype(str).str.strip()
+    df["type"] = df["type"].astype(str).str.strip().str.upper()
+    
+    prices = {}
+    for loc in df["location"].unique():
+        loc_df = df[df["location"] == loc]
+        try:
+            vlsfo_curr = loc_df.loc[loc_df["type"].isin(["VLSFO", "LSFO", "IFO"]), month_col].iloc[0]
+            mgo_curr = loc_df.loc[loc_df["type"].isin(["MGO", "MDO"]), month_col].iloc[0]
+            vlsfo_prev = loc_df.loc[loc_df["type"].isin(["VLSFO", "LSFO", "IFO"]), prev_month_col].iloc[0]
+            mgo_prev = loc_df.loc[loc_df["type"].isin(["MGO", "MDO"]), prev_month_col].iloc[0]
+            prices[loc] = (float(vlsfo_curr), float(mgo_curr), float(vlsfo_prev), float(mgo_prev))
+        except (IndexError, KeyError):
+            continue
+    
+    return prices
 
 
 # ============================================================
@@ -818,6 +937,7 @@ def build_profit_table(
     pf: PricesAndFees,
     bunker_days: float = 1.0,
     enforce_laycan: bool = True,
+    bunker_prices_by_location: dict[str, tuple[float, float, float, float]] | None = None,
 ) -> pd.DataFrame:
     rows = []
 
@@ -843,8 +963,29 @@ def build_profit_table(
                     if eta_load > c.latest_date:
                         continue
 
+            # Select bunker prices based on vessel position (nearest hub)
+            pf_to_use = pf
+            bunker_location = "Singapore"  # default
+            if bunker_prices_by_location:
+                bunker_location = get_bunker_location_for_port(v.position)
+                if bunker_location in bunker_prices_by_location:
+                    vlsfo, mgo, vlsfo_prev, mgo_prev = bunker_prices_by_location[bunker_location]
+                    pf_to_use = PricesAndFees(
+                        ifo_price=vlsfo,
+                        mdo_price=mgo,
+                        ifo_price_prev=vlsfo_prev,
+                        mdo_price_prev=mgo_prev,
+                        awrp=pf.awrp,
+                        cev=pf.cev,
+                        ilhoc=pf.ilhoc,
+                        bunker_da_per_day=pf.bunker_da_per_day,
+                    )
+
             voy = Voyage(ballast_leg_nm=ballast_nm, laden_leg_nm=laden_nm, bunker_days=bunker_days)
-            out = calc(v, c, voy, pf)
+            out = calc(v, c, voy, pf_to_use)
+
+            # Add bunker location info to output
+            out["bunker_location"] = bunker_location
 
             # keep eta in table for debugging (optional)
             if enforce_laycan and v_dep is not None:
@@ -1031,7 +1172,11 @@ if __name__ == "__main__":
     # 1) lookups
     dist_lut = load_distance_lookup(DIST_XLSX)
 
-    # 2) bunker prices (Singapore): current month (mar) and previous month (feb)
+    # 2) bunker prices - load ALL locations for dynamic selection
+    all_bunker_prices = load_all_bunker_prices(BUNKER_XLSX, month_col="mar", prev_month_col="feb")
+    print(f"\nLoaded bunker prices for {len(all_bunker_prices)} locations: {list(all_bunker_prices.keys())}")
+    
+    # Default prices (Singapore) for fallback
     vlsfo_price, mgo_price, vlsfo_prev, mgo_prev = load_bunker_prices(
         BUNKER_XLSX, location="Singapore", month_col="mar", prev_month_col="feb"
     )
@@ -1080,10 +1225,10 @@ if __name__ == "__main__":
     #OUTPUT_DIR.mkdir(exist_ok=True)
     #save_missing_pairs_to_excel(all_missing, OUTPUT_DIR / "missing_port_pairs.xlsx")
 
-    # 6) build profit tables (enforce laycan)
-    df_cv_cc = build_profit_table(cargill_vessels, committed, dist_lut, pf, bunker_days=1.0, enforce_laycan=True)
-    df_cv_mc = build_profit_table(cargill_vessels, market_cargoes, dist_lut, pf, bunker_days=1.0, enforce_laycan=True)
-    df_mv_cc = build_profit_table(market_vessels, committed, dist_lut, pf, bunker_days=1.0, enforce_laycan=True)
+    # 6) build profit tables (enforce laycan) with location-based bunker prices
+    df_cv_cc = build_profit_table(cargill_vessels, committed, dist_lut, pf, bunker_days=1.0, enforce_laycan=True, bunker_prices_by_location=all_bunker_prices)
+    df_cv_mc = build_profit_table(cargill_vessels, market_cargoes, dist_lut, pf, bunker_days=1.0, enforce_laycan=True, bunker_prices_by_location=all_bunker_prices)
+    df_mv_cc = build_profit_table(market_vessels, committed, dist_lut, pf, bunker_days=1.0, enforce_laycan=True, bunker_prices_by_location=all_bunker_prices)
 
     # 7) print top rows
     print("\n=== Cargill vessels x Committed cargoes (Top 10) ===")
@@ -1111,6 +1256,7 @@ if __name__ == "__main__":
         print("OPTIMAL PLAN: COMMITTED CARGOES (must carry)")
         print("==============================")
         print(commit_plan)
+        print(f"\n[TEST] Duration for optimal route: {commit_plan['total_duration'].tolist()}")
         print(f"\nCommitted cargo total P/L: {commit_total:,.2f}")
 
         used_cargill = set(commit_plan.loc[commit_plan["vessel_type"] == "CARGILL", "vessel"].tolist())

@@ -246,6 +246,9 @@ class WeatherPredictorML:
         except FileNotFoundError:
             print("No saved models found.")
             return False
+        except (AttributeError, ModuleNotFoundError) as e:
+            print(f"Model version incompatible with current scikit-learn. Will retrain. ({e})")
+            return False
     
     def get_feature_importance(self) -> Dict[str, float]:
         if self.gb_combined_delay_model is None:
