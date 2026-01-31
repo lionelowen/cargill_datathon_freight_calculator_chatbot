@@ -17,13 +17,14 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
+from congestion_script import predict_congestion
+from datetime import timedelta
 import pandas as pd
 import numpy as np
 import math
 import itertools
 import re
 import unicodedata
-from ml_weather_predictor import WeatherPredictorML
 
 # ----------------------------
 # Paths
@@ -911,7 +912,7 @@ def load_cargoes_from_excel(cargo_xlsx: Path, tag: str, ffa: pd.DataFrame | None
 # ============================================================
 # Calculator (profit/loss)
 # ============================================================
-def calc(v: Vessel, c: Cargo, voy: Voyage, pf: PricesAndFees) -> dict:
+def calc(v: Vessel, c: Cargo, voy: Voyage, pf: PricesAndFees, originBDI: int = 2000, endingBDI: int = 2000, scenarioType: str = 'constant') -> dict:
     # durations at sea
     dur_ballast_days = voy.ballast_leg_nm / (v.sp_ballast * 24.0)
     dur_laden_days = voy.laden_leg_nm / (v.sp_laden * 24.0)
@@ -975,17 +976,29 @@ def calc(v: Vessel, c: Cargo, voy: Voyage, pf: PricesAndFees) -> dict:
     tce = (revenue - voyage_costs) / total_duration if total_duration > 0 else 0.0
 
     # --- Weather delay integration ---
-    try:
-        predictor = WeatherPredictorML()
-        # Use route string as e.g. 'australia_china', date as today (or c.earliest_date if available)
-        route = f"{c.load_port.lower().replace(' ', '_')}_{c.discharge_port.lower().replace(' ', '_')}"
-        date = str(c.earliest_date) if hasattr(c, 'earliest_date') and c.earliest_date is not None else pd.Timestamp.today().strftime('%Y-%m-%d')
-        delay_result = predictor.predict(date, route)
-        weather_delay_days = delay_result.get('voyage_delay_days', 0)
-    except Exception as e:
-        weather_delay_days = 0
-    # Add weather delay to total_duration
-    total_duration += weather_delay_days
+    
+
+    ## PORT CONGESTION DELAY ##
+
+    # Date at origin port
+    earlyDate = c.earliest_date
+    latestDate = c.latest_date
+    diff = latestDate - earlyDate
+    originDate = earlyDate + (diff // 2)
+
+    # Date at destination port
+    destinationDate = v.time_of_departure + timedelta(days=dur_ballast_days)
+
+    # Delay at origin port
+    originCongestionResult = predict_congestion(originDate, originBDI, c.load_port, scenarioType)
+    print("origin congestion:", originCongestionResult)
+    origin_port_delay = originCongestionResult['Predicted_Delay']
+    total_duration += origin_port_delay
+    # Delay at destination port
+    destinationCongestionResult = predict_congestion(destinationDate, endingBDI, c.discharge_port, scenarioType)
+    print("destination congestion:", destinationCongestionResult)
+    destination_port_delay = destinationCongestionResult['Predicted_Delay']
+    total_duration += destination_port_delay 
 
     return {
         "vessel": v.name,
@@ -1006,7 +1019,8 @@ def calc(v: Vessel, c: Cargo, voy: Voyage, pf: PricesAndFees) -> dict:
         "misc_expense": misc_expense,
         "profit_loss": profit_loss,
         "tce": tce,
-        "weather_delay_days": weather_delay_days,
+        "origin_port_delay": origin_port_delay,
+        "destination_port_delay": destination_port_delay
     }
 
 
@@ -1172,7 +1186,7 @@ def optimal_committed_assignment(
     assign_df = pd.DataFrame(best_choice)
     # Include comprehensive columns for detailed output
     cols = ["base_cargo_id", "cargo", "discharge_port", "vessel_type", "vessel", 
-            "from_pos", "load_port", "ballast_nm", "laden_nm", 
+            "from_pos", "origin_port_delay", "destination_port_delay", "load_port", "ballast_nm", "laden_nm", 
             "dur_ballast_days", "dur_laden_days", "total_duration",
             "loaded_qty", "revenue", "hire_net", "bunker_expense", "misc_expense",
             "profit_loss", "tce", "bunker_location", "eta_load"]
@@ -1375,15 +1389,15 @@ if __name__ == "__main__":
 
     # 7) print top rows
     print("\n=== Cargill vessels x Committed cargoes (Top 10) ===")
-    print(df_cv_cc.head(10)[["vessel", "cargo", "profit_loss", "total_duration", "ballast_nm", "laden_nm", "eta_load"]]
+    print(df_cv_cc.head(10)[["vessel", "cargo", "profit_loss", "origin_port_delay", "destination_port_delay", "total_duration", "ballast_nm", "laden_nm", "eta_load"]]
           if len(df_cv_cc) else "No rows.")
 
     print("\n=== Cargill vessels x Market cargoes (Top 10) ===")
-    print(df_cv_mc.head(10)[["vessel", "cargo", "profit_loss", "total_duration", "ballast_nm", "laden_nm", "eta_load"]]
+    print(df_cv_mc.head(10)[["vessel", "cargo", "profit_loss", "origin_port_delay", "destination_port_delay", "total_duration", "ballast_nm", "laden_nm", "eta_load"]]
           if len(df_cv_mc) else "No rows.")
 
     print("\n=== Market vessels x Committed cargoes (Top 10) ===")
-    print(df_mv_cc.head(10)[["vessel", "cargo", "profit_loss", "total_duration", "ballast_nm", "laden_nm", "eta_load"]]
+    print(df_mv_cc.head(10)[["vessel", "cargo", "profit_loss", "origin_port_delay", "destination_port_delay", "total_duration", "ballast_nm", "laden_nm", "eta_load"]]
           if len(df_mv_cc) else "No rows.")
 
     # print NaN profit rows
@@ -1433,6 +1447,8 @@ if __name__ == "__main__":
                 print(f"     Ballast Duration:  {row['dur_ballast_days']:.2f} days")
             if 'dur_laden_days' in row:
                 print(f"     Laden Duration:    {row['dur_laden_days']:.2f} days")
+            print(f"     Origin Port Delay: {row['origin_port_delay']:.2f} days")
+            print(f"     Destination Port Delay: {row['destination_port_delay']:.2f} days")
             print(f"     Total Duration:    {row['total_duration']:.2f} days")
             print(f"     ETA at Load Port:  {row['eta_load']}")
             
