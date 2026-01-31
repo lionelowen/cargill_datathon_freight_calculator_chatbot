@@ -27,7 +27,7 @@ import seaborn as sns
 class WeatherPredictorML:
     
     def __init__(self, model_dir: str = None):
-        self.model_dir = model_dir or Path(__file__).parent / "models"
+        self.model_dir = model_dir or Path(__file__).parent / "ml_weather_prediction" / "models"
         Path(self.model_dir).mkdir(exist_ok=True)
         
         self.gb_weather_model = None
@@ -419,7 +419,7 @@ def example_predictions():
     
     if not predictor.load_models():
         print("\nTraining new models")
-        data_path = Path(__file__).parent.parent.parent / "data" / "synthetic_weather_data_expanded.csv"
+        data_path = Path(__file__).parent.parent / "data" / "synthetic_weather_data_expanded.csv"
         predictor.train(str(data_path))
     
     test_cases = [
