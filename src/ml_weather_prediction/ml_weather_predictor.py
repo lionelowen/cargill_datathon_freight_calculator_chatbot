@@ -267,7 +267,7 @@ def example_predictions():
     
     if not predictor.load_models():
         print("\nTraining new models")
-        data_path = Path(__file__).parent.parent / "data" / "synthetic_weather_data_backup.csv"
+        data_path = Path(__file__).parent.parent / "data" / "synthetic_weather_data_expanded.csv"
         predictor.train(str(data_path))
     
     test_cases = [
