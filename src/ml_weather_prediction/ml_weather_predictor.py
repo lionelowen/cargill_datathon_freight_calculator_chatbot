@@ -11,6 +11,9 @@ from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 
+import matplotlib.pyplot as plt
+import seaborn as sns
+
 
 class WeatherPredictorML:
     
@@ -76,7 +79,7 @@ class WeatherPredictorML:
         self.feature_names = features
         return df[features]
     
-    def train(self, csv_path: str, test_size: float = 0.2, random_state: int = 42):
+    def train(self, csv_path: str, test_size: float = 0.2, random_state: int = 42, show_plots: bool = True):
         df = self._load_weather_data(csv_path)
         
         df = self._engineer_features(df)
@@ -130,6 +133,14 @@ class WeatherPredictorML:
         
         print("\n")
         print(f"   R2: {r2_delay:.4f}, RMSE: {rmse_delay:.4f} days, MAE: {mae_delay:.4f} days")
+        
+        if show_plots:
+            self._generate_training_plots(
+                y_weather_train, y_weather_test, y_weather_train_pred, y_weather_test_pred,
+                y_delay_train, y_delay_test, y_delay_pred, 
+                r2_weather, rmse_weather, mae_weather, 
+                r2_delay, rmse_delay, mae_delay
+            )
         
         print("\nModels saved to", self.model_dir)
         
@@ -195,6 +206,138 @@ class WeatherPredictorML:
             return 'summer'
         else:
             return 'autumn'
+    
+    def _generate_training_plots(self, y_weather_train, y_weather_test, y_weather_train_pred, y_weather_test_pred,
+                                 y_delay_train, y_delay_test, y_delay_pred, 
+                                 r2_weather, rmse_weather, mae_weather, 
+                                 r2_delay, rmse_delay, mae_delay):
+        
+        sns.set_style("whitegrid")
+        plt.rcParams.update({'font.size': 10})
+        
+        fig, axes = plt.subplots(2, 3, figsize=(20, 14))
+        fig.suptitle('ML Weather Predictor - Training Results', fontsize=18, fontweight='bold', y=0.98)
+        
+        axes[0, 0].scatter(y_weather_train, y_weather_train_pred, alpha=0.6, s=30, color='blue', label='Train')
+        axes[0, 0].scatter(y_weather_test, y_weather_test_pred, alpha=0.6, s=30, color='red', label='Test')
+        min_val = min(y_weather_train.min(), y_weather_test.min())
+        max_val = max(y_weather_train.max(), y_weather_test.max())
+        axes[0, 0].plot([min_val, max_val], [min_val, max_val], 'k--', lw=2, label='Perfect Prediction')
+        axes[0, 0].set_xlabel('Actual Weather %', fontsize=11)
+        axes[0, 0].set_ylabel('Predicted Weather %', fontsize=11)
+        axes[0, 0].set_title(f'Weather Model\nR²={r2_weather:.4f}, RMSE={rmse_weather:.2f}%', fontsize=12, pad=15)
+        axes[0, 0].legend(fontsize=9)
+        axes[0, 0].grid(True, alpha=0.3)
+        
+        residuals_weather = y_weather_test - y_weather_test_pred
+        axes[0, 1].scatter(y_weather_test_pred, residuals_weather, alpha=0.6, s=30, color='purple')
+        axes[0, 1].axhline(y=0, color='k', linestyle='--', lw=2)
+        axes[0, 1].set_xlabel('Predicted Weather %', fontsize=11)
+        axes[0, 1].set_ylabel('Residuals', fontsize=11)
+        axes[0, 1].set_title(f'Weather Model Residuals\nMAE={mae_weather:.2f}%', fontsize=12, pad=15)
+        axes[0, 1].grid(True, alpha=0.3)
+        
+        axes[0, 2].hist(residuals_weather, bins=30, color='coral', edgecolor='black', alpha=0.7)
+        axes[0, 2].axvline(x=0, color='k', linestyle='--', lw=2)
+        axes[0, 2].set_xlabel('Residuals (%)', fontsize=11)
+        axes[0, 2].set_ylabel('Frequency', fontsize=11)
+        axes[0, 2].set_title('Weather Model\nError Distribution', fontsize=12, pad=15)
+        axes[0, 2].grid(True, alpha=0.3)
+        
+        axes[1, 0].scatter(y_delay_train, y_delay_train, alpha=0.6, s=30, color='blue', label='Train (Identity)')
+        axes[1, 0].scatter(y_delay_test, y_delay_pred, alpha=0.6, s=30, color='red', label='Test')
+        min_val = min(y_delay_train.min(), y_delay_test.min())
+        max_val = max(y_delay_train.max(), y_delay_test.max())
+        axes[1, 0].plot([min_val, max_val], [min_val, max_val], 'k--', lw=2, label='Perfect Prediction')
+        axes[1, 0].set_xlabel('Actual Delay (days)', fontsize=11)
+        axes[1, 0].set_ylabel('Predicted Delay (days)', fontsize=11)
+        axes[1, 0].set_title(f'Delay Model\nR²={r2_delay:.4f}, RMSE={rmse_delay:.2f} days', fontsize=12, pad=15)
+        axes[1, 0].legend(fontsize=9)
+        axes[1, 0].grid(True, alpha=0.3)
+        
+        residuals_delay = y_delay_test - y_delay_pred
+        axes[1, 1].scatter(y_delay_pred, residuals_delay, alpha=0.6, s=30, color='green')
+        axes[1, 1].axhline(y=0, color='k', linestyle='--', lw=2)
+        axes[1, 1].set_xlabel('Predicted Delay (days)', fontsize=11)
+        axes[1, 1].set_ylabel('Residuals', fontsize=11)
+        axes[1, 1].set_title(f'Delay Model Residuals\nMAE={mae_delay:.2f} days', fontsize=12, pad=15)
+        axes[1, 1].grid(True, alpha=0.3)
+        
+        axes[1, 2].hist(residuals_delay, bins=30, color='lightgreen', edgecolor='black', alpha=0.7)
+        axes[1, 2].axvline(x=0, color='k', linestyle='--', lw=2)
+        axes[1, 2].set_xlabel('Residuals (days)', fontsize=11)
+        axes[1, 2].set_ylabel('Frequency', fontsize=11)
+        axes[1, 2].set_title('Delay Model\nError Distribution', fontsize=12, pad=15)
+        axes[1, 2].grid(True, alpha=0.3)
+        
+        plt.tight_layout(rect=[0, 0.02, 1, 0.96], pad=3.0, h_pad=4.0, w_pad=3.0)
+        
+        outputs_dir = Path("D:/Documents/projects/hackathon/cargill_datathon_freight_calculator_chatbot/outputs")
+        outputs_dir.mkdir(exist_ok=True)
+        plt.savefig(outputs_dir / "training_performance.png", dpi=300, bbox_inches='tight')
+        print(f"\n📊 TRAINING PERFORMANCE PLOTS SAVED TO:")
+        print(f"    {outputs_dir.absolute() / 'training_performance.png'}")
+        
+        try:
+            plt.show()
+        except Exception:
+            print("  (Display not available - plots saved to file)")
+        
+        self._plot_feature_importance()
+    
+    def _plot_feature_importance(self):
+        if self.gb_weather_model is None or self.gb_combined_delay_model is None:
+            return
+            
+        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+        fig.suptitle('Feature Importance Analysis', fontsize=14, fontweight='bold')
+        
+        weather_importance = self.gb_weather_model.feature_importances_
+        weather_feat_dict = dict(zip(self.feature_names, weather_importance))
+        weather_feat_dict = dict(sorted(weather_feat_dict.items(), key=lambda x: x[1], reverse=True))
+        
+        top_n = min(10, len(weather_feat_dict))
+        weather_top = dict(list(weather_feat_dict.items())[:top_n])
+        features_w = list(weather_top.keys())
+        importances_w = list(weather_top.values())
+        colors_w = plt.cm.Blues(np.linspace(0.4, 0.8, len(features_w)))
+        
+        axes[0].barh(features_w, importances_w, color=colors_w, edgecolor='black', alpha=0.8)
+        axes[0].set_xlabel('Importance Score')
+        axes[0].set_title(f'Weather Model - Top {top_n} Features')
+        axes[0].invert_yaxis()
+        axes[0].grid(True, alpha=0.3, axis='x')
+        
+        delay_importance_features = self.gb_combined_delay_model.feature_importances_[:-1]  # Exclude weather_pct
+        weather_importance_in_delay = self.gb_combined_delay_model.feature_importances_[-1]  # Weather pct importance
+        
+        delay_feat_dict = dict(zip(self.feature_names, delay_importance_features))
+        delay_feat_dict['weather_pct'] = weather_importance_in_delay
+        delay_feat_dict = dict(sorted(delay_feat_dict.items(), key=lambda x: x[1], reverse=True))
+        
+        delay_top = dict(list(delay_feat_dict.items())[:top_n])
+        features_d = list(delay_top.keys())
+        importances_d = list(delay_top.values())
+        colors_d = plt.cm.Greens(np.linspace(0.4, 0.8, len(features_d)))
+        
+        axes[1].barh(features_d, importances_d, color=colors_d, edgecolor='black', alpha=0.8)
+        axes[1].set_xlabel('Importance Score')
+        axes[1].set_title(f'Delay Model - Top {top_n} Features')
+        axes[1].invert_yaxis()
+        axes[1].grid(True, alpha=0.3, axis='x')
+        
+        plt.tight_layout()
+        
+        outputs_dir = Path("D:/Documents/projects/hackathon/cargill_datathon_freight_calculator_chatbot/outputs")
+        outputs_dir.mkdir(exist_ok=True)
+        plt.savefig(outputs_dir / "feature_importance.png", dpi=300, bbox_inches='tight')
+        print(f"FEATURE IMPORTANCE PLOTS SAVED TO:")
+        print(f"    {outputs_dir.absolute() / 'feature_importance.png'}")
+        
+        try:
+            plt.show()
+        except Exception:
+            print("  (Display not available - plots saved to file)")
     
     def _save_models(self):
         model_path = Path(self.model_dir)
@@ -267,7 +410,7 @@ def example_predictions():
     
     if not predictor.load_models():
         print("\nTraining new models")
-        data_path = Path(__file__).parent.parent / "data" / "synthetic_weather_data_expanded.csv"
+        data_path = Path(__file__).parent.parent.parent / "data" / "synthetic_weather_data_expanded.csv"
         predictor.train(str(data_path))
     
     test_cases = [

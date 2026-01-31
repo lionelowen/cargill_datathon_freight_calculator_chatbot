@@ -16,12 +16,20 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
 
 #React to user input
-if prompt := st.chat_input("Ask anything"):
+if prompt := st.chat_input("Ask anything", accept_file=True):
+
+    user_text = prompt.text if prompt.text else ""
+
     #Display user message in chat message container
     with st.chat_message("user"):
-        st.markdown(prompt)
+        if user_text:
+            st.markdown(user_text)
+        if prompt.files:
+            for f in prompt.files:
+                st.caption(f"📎 Attached: {f.name}")
+
     #Add user message to chat history
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    st.session_state.messages.append({"role": "user", "content": user_text})
 
     with st.chat_message("assistant"):
         history = [
