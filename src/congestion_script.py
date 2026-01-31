@@ -48,10 +48,9 @@ def predict_congestion(target_date, target_bdi, port_name, scenario_type, weathe
     """
     # --- A. SETUP PATHS ---
     SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-    PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, '..'))
     # Assuming standard folder structure
-    MODEL_PATH = os.path.join(PROJECT_ROOT, 'models', 'congestion_model.pkl')
-    DATA_PATH = os.path.join(PROJECT_ROOT, 'data', 'hybrid_training_data.csv')
+    MODEL_PATH = os.path.join(SCRIPT_DIR, 'models', 'congestion_model.pkl')
+    DATA_PATH = os.path.join(SCRIPT_DIR, 'data', 'hybrid_training_data.csv')
 
     # Load Resources
     try:
