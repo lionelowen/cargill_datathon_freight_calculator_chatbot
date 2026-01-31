@@ -33,7 +33,6 @@ env*/
 *.h5
 *.hdf5
 *.parquet
-*.pkl
 *.joblib
 
 # OS
