@@ -23,6 +23,7 @@ import math
 import itertools
 import re
 import unicodedata
+from ml_weather_predictor import WeatherPredictorML
 
 # ----------------------------
 # Paths
@@ -973,6 +974,19 @@ def calc(v: Vessel, c: Cargo, voy: Voyage, pf: PricesAndFees) -> dict:
     voyage_costs = bunker_expense + misc_expense
     tce = (revenue - voyage_costs) / total_duration if total_duration > 0 else 0.0
 
+    # --- Weather delay integration ---
+    try:
+        predictor = WeatherPredictorML()
+        # Use route string as e.g. 'australia_china', date as today (or c.earliest_date if available)
+        route = f"{c.load_port.lower().replace(' ', '_')}_{c.discharge_port.lower().replace(' ', '_')}"
+        date = str(c.earliest_date) if hasattr(c, 'earliest_date') and c.earliest_date is not None else pd.Timestamp.today().strftime('%Y-%m-%d')
+        delay_result = predictor.predict(date, route)
+        weather_delay_days = delay_result.get('voyage_delay_days', 0)
+    except Exception as e:
+        weather_delay_days = 0
+    # Add weather delay to total_duration
+    total_duration += weather_delay_days
+
     return {
         "vessel": v.name,
         "cargo": c.name,
@@ -992,6 +1006,7 @@ def calc(v: Vessel, c: Cargo, voy: Voyage, pf: PricesAndFees) -> dict:
         "misc_expense": misc_expense,
         "profit_loss": profit_loss,
         "tce": tce,
+        "weather_delay_days": weather_delay_days,
     }
 
 
@@ -1553,4 +1568,3 @@ if __name__ == "__main__":
 
     print(f"\nSaved CSV outputs to: {OUT_DIR}")
 
-    
