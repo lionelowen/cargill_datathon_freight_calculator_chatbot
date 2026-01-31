@@ -203,15 +203,7 @@ The expanded dataset was generated using the following approach:
    - Max: 60+ knots (hurricane)
    - Mean: ~15 knots
 
-### Data Expansion History
-
-**Previous Version (Phase 1-16):**
-- Observations: 800
-- Time Period: 1 year
-- Weather Range: 20-25% (narrow)
-- File: `synthetic_weather_data_backup.csv` (deprecated)
-
-**Current Version (Phase 17+):**
+### Data
 - Observations: 2000 (2.5× expansion)
 - Time Period: 2 years (2× expansion)
 - Weather Range: 10-40% (4× wider variance)
