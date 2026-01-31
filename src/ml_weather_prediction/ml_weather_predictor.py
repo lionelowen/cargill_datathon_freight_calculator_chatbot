@@ -6,6 +6,15 @@ import pickle
 import os
 from pathlib import Path
 
+
+try:
+    np.set_printoptions(legacy=False)
+except (ValueError, TypeError):
+    try:
+        np.set_printoptions(legacy='1.25')
+    except (ValueError, TypeError):
+        pass
+
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.model_selection import train_test_split
@@ -275,7 +284,7 @@ class WeatherPredictorML:
         outputs_dir = Path("D:/Documents/projects/hackathon/cargill_datathon_freight_calculator_chatbot/outputs")
         outputs_dir.mkdir(exist_ok=True)
         plt.savefig(outputs_dir / "training_performance.png", dpi=300, bbox_inches='tight')
-        print(f"\n📊 TRAINING PERFORMANCE PLOTS SAVED TO:")
+        print(f"\nTRAINING PERFORMANCE PLOTS SAVED TO:")
         print(f"    {outputs_dir.absolute() / 'training_performance.png'}")
         
         try:
