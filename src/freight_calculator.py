@@ -810,3 +810,22 @@ portfolio_total = commit_total + market_total - penalty
 
 print(f"\nUnused committed vessel penalty: {penalty:,.2f}")
 print(f"PORTFOLIO TOTAL P/L (after penalty): {portfolio_total:,.2f}")
+
+
+from congestion_script import predict_congestion
+
+
+user_date = '2025-08-15'
+user_bdi = 4500
+user_port = 'QINGDAO'
+user_scenario = 'spike'
+
+print("⏳ Running Prediction Model...")
+result = predict_congestion(
+    target_date=user_date,
+    target_bdi=user_bdi,
+    port_name=user_port,
+    scenario_type=user_scenario
+)
+
+print(result)

@@ -14,51 +14,51 @@ import os
 
 PORT_CONFIG = {
     # --- ORIGIN: BRAZIL (The "Liquefaction" Cluster) ---
-    'Ponta da Madeira': {'type': 'Load', 'rain_sens': 2.0, 'wind_sens': 0.5, 'fog_sens': 0.1, 'mkt_sens': 1.2},
-    'Tubarao':          {'type': 'Load', 'rain_sens': 1.8, 'wind_sens': 0.5, 'fog_sens': 0.2, 'mkt_sens': 1.0},
-    'Itaguai':          {'type': 'Load', 'rain_sens': 1.8, 'wind_sens': 0.5, 'fog_sens': 0.2, 'mkt_sens': 1.0},
+    'PONTA DA MADEIRA': {'type': 'Load', 'rain_sens': 2.0, 'wind_sens': 0.5, 'fog_sens': 0.1, 'mkt_sens': 1.2},
+    'TUBARAO':          {'type': 'Load', 'rain_sens': 1.8, 'wind_sens': 0.5, 'fog_sens': 0.2, 'mkt_sens': 1.0},
+    'ITAGUAI':          {'type': 'Load', 'rain_sens': 1.8, 'wind_sens': 0.5, 'fog_sens': 0.2, 'mkt_sens': 1.0},
 
     # --- ORIGIN: AUSTRALIA (The "Cyclone" Cluster) ---
-    'Port Hedland':     {'type': 'Load', 'rain_sens': 0.2, 'wind_sens': 2.0, 'fog_sens': 0.0, 'mkt_sens': 1.5},
-    'Dampier':          {'type': 'Load', 'rain_sens': 0.2, 'wind_sens': 2.0, 'fog_sens': 0.0, 'mkt_sens': 1.2},
+    'PORT HEDLAND':     {'type': 'Load', 'rain_sens': 0.2, 'wind_sens': 2.0, 'fog_sens': 0.0, 'mkt_sens': 1.5},
+    'DAMPIER':          {'type': 'Load', 'rain_sens': 0.2, 'wind_sens': 2.0, 'fog_sens': 0.0, 'mkt_sens': 1.2},
 
     # --- ORIGIN: GLOBAL OTHERS ---
-    'Saldanha Bay':     {'type': 'Load', 'rain_sens': 0.3, 'wind_sens': 1.8, 'fog_sens': 0.5, 'mkt_sens': 1.0}, # SA
-    'Taboneo':          {'type': 'Load', 'rain_sens': 2.5, 'wind_sens': 1.5, 'fog_sens': 0.5, 'mkt_sens': 0.8}, # Indo
-    'Kamsar':           {'type': 'Load', 'rain_sens': 2.0, 'wind_sens': 1.0, 'fog_sens': 0.5, 'mkt_sens': 0.8}, # Guinea
-    'Vancouver':        {'type': 'Load', 'rain_sens': 1.2, 'wind_sens': 0.8, 'fog_sens': 0.5, 'mkt_sens': 1.0}, # Canada
+    'SALDANHA BAY':     {'type': 'Load', 'rain_sens': 0.3, 'wind_sens': 1.8, 'fog_sens': 0.5, 'mkt_sens': 1.0}, # SA
+    'TABONEO':          {'type': 'Load', 'rain_sens': 2.5, 'wind_sens': 1.5, 'fog_sens': 0.5, 'mkt_sens': 0.8}, # Indo
+    'KAMSAR':           {'type': 'Load', 'rain_sens': 2.0, 'wind_sens': 1.0, 'fog_sens': 0.5, 'mkt_sens': 0.8}, # Guinea
+    'VANCOUVER':        {'type': 'Load', 'rain_sens': 1.2, 'wind_sens': 0.8, 'fog_sens': 0.5, 'mkt_sens': 1.0}, # Canada
 
     # --- DESTINATION: YANGTZE RIVER (The "Fog & Draft" Cluster) ---
-    'Zhangjiagang':     {'type': 'Disch', 'rain_sens': 0.5, 'fog_sens': 2.0, 'wind_sens': 0.5, 'mkt_sens': 1.8},
-    'Nantong':          {'type': 'Disch', 'rain_sens': 0.5, 'fog_sens': 2.0, 'wind_sens': 0.5, 'mkt_sens': 1.6},
-    'Nanjing':          {'type': 'Disch', 'rain_sens': 0.5, 'fog_sens': 2.0, 'wind_sens': 0.5, 'mkt_sens': 1.5},
-    'Jiangyin':         {'type': 'Disch', 'rain_sens': 0.5, 'fog_sens': 2.0, 'wind_sens': 0.5, 'mkt_sens': 1.6},
+    'ZHANGJIAGANG':     {'type': 'Disch', 'rain_sens': 0.5, 'fog_sens': 2.0, 'wind_sens': 0.5, 'mkt_sens': 1.8},
+    'NANTONG':          {'type': 'Disch', 'rain_sens': 0.5, 'fog_sens': 2.0, 'wind_sens': 0.5, 'mkt_sens': 1.6},
+    'NANJING':          {'type': 'Disch', 'rain_sens': 0.5, 'fog_sens': 2.0, 'wind_sens': 0.5, 'mkt_sens': 1.5},
+    'JIANGYIN':         {'type': 'Disch', 'rain_sens': 0.5, 'fog_sens': 2.0, 'wind_sens': 0.5, 'mkt_sens': 1.6},
 
     # --- DESTINATION: NORTH CHINA (The "Bohai Ice/Fog" Cluster) ---
-    'Caofeidian':       {'type': 'Disch', 'rain_sens': 0.1, 'fog_sens': 2.0, 'wind_sens': 1.0, 'mkt_sens': 1.8},
-    'Tianjin':          {'type': 'Disch', 'rain_sens': 0.1, 'fog_sens': 2.0, 'wind_sens': 1.0, 'mkt_sens': 1.6},
-    'Jingtang':         {'type': 'Disch', 'rain_sens': 0.1, 'fog_sens': 2.0, 'wind_sens': 1.0, 'mkt_sens': 1.8},
-    'Qinhuangdao':      {'type': 'Disch', 'rain_sens': 0.1, 'fog_sens': 1.8, 'wind_sens': 1.0, 'mkt_sens': 1.5},
-    'Dalian':           {'type': 'Disch', 'rain_sens': 0.1, 'fog_sens': 1.8, 'wind_sens': 1.2, 'mkt_sens': 1.5},
-    'Yingkou':          {'type': 'Disch', 'rain_sens': 0.1, 'fog_sens': 2.0, 'wind_sens': 1.2, 'mkt_sens': 1.5},
+    'CAOFEIDIAN':       {'type': 'Disch', 'rain_sens': 0.1, 'fog_sens': 2.0, 'wind_sens': 1.0, 'mkt_sens': 1.8},
+    'TIANJIN':          {'type': 'Disch', 'rain_sens': 0.1, 'fog_sens': 2.0, 'wind_sens': 1.0, 'mkt_sens': 1.6},
+    'JINGTANG':         {'type': 'Disch', 'rain_sens': 0.1, 'fog_sens': 2.0, 'wind_sens': 1.0, 'mkt_sens': 1.8},
+    'QINHUANGDAO':      {'type': 'Disch', 'rain_sens': 0.1, 'fog_sens': 1.8, 'wind_sens': 1.0, 'mkt_sens': 1.5},
+    'DALIAN':           {'type': 'Disch', 'rain_sens': 0.1, 'fog_sens': 1.8, 'wind_sens': 1.2, 'mkt_sens': 1.5},
+    'YINGKOU':          {'type': 'Disch', 'rain_sens': 0.1, 'fog_sens': 2.0, 'wind_sens': 1.2, 'mkt_sens': 1.5},
 
     # --- DESTINATION: EAST CHINA / HUBS (The "Congestion" Cluster) ---
-    'Qingdao':          {'type': 'Disch', 'rain_sens': 0.2, 'fog_sens': 1.8, 'wind_sens': 0.8, 'mkt_sens': 2.0},
-    'Rizhao':           {'type': 'Disch', 'rain_sens': 0.2, 'fog_sens': 1.5, 'wind_sens': 0.8, 'mkt_sens': 1.6},
-    'Lianyungang':      {'type': 'Disch', 'rain_sens': 0.2, 'fog_sens': 1.5, 'wind_sens': 0.8, 'mkt_sens': 1.5},
-    'Ningbo':           {'type': 'Disch', 'rain_sens': 0.5, 'fog_sens': 1.5, 'wind_sens': 1.5, 'mkt_sens': 2.0},
-    'Zhoushan':         {'type': 'Disch', 'rain_sens': 0.5, 'fog_sens': 1.5, 'wind_sens': 1.5, 'mkt_sens': 1.8},
+    'QINGDAO':          {'type': 'Disch', 'rain_sens': 0.2, 'fog_sens': 1.8, 'wind_sens': 0.8, 'mkt_sens': 2.0},
+    'RIZHAO':           {'type': 'Disch', 'rain_sens': 0.2, 'fog_sens': 1.5, 'wind_sens': 0.8, 'mkt_sens': 1.6},
+    'LIANYUNGANG':      {'type': 'Disch', 'rain_sens': 0.2, 'fog_sens': 1.5, 'wind_sens': 0.8, 'mkt_sens': 1.5},
+    'NINGBO':           {'type': 'Disch', 'rain_sens': 0.5, 'fog_sens': 1.5, 'wind_sens': 1.5, 'mkt_sens': 2.0},
+    'ZHOUSHAN':         {'type': 'Disch', 'rain_sens': 0.5, 'fog_sens': 1.5, 'wind_sens': 1.5, 'mkt_sens': 1.8},
 
     # --- DESTINATION: SOUTH CHINA / INDIA (The "Monsoon/Typhoon" Cluster) ---
-    'Fangcheng':        {'type': 'Disch', 'rain_sens': 1.0, 'fog_sens': 0.5, 'wind_sens': 2.0, 'mkt_sens': 1.2},
-    'Zhanjiang':        {'type': 'Disch', 'rain_sens': 1.0, 'fog_sens': 0.5, 'wind_sens': 2.0, 'mkt_sens': 1.5},
-    'Guangzhou':        {'type': 'Disch', 'rain_sens': 1.0, 'fog_sens': 0.5, 'wind_sens': 1.5, 'mkt_sens': 1.5},
-    'Krishnapatnam':    {'type': 'Disch', 'rain_sens': 2.0, 'fog_sens': 0.2, 'wind_sens': 1.5, 'mkt_sens': 1.0},
-    'Mangalore':        {'type': 'Disch', 'rain_sens': 2.5, 'fog_sens': 0.2, 'wind_sens': 1.5, 'mkt_sens': 0.8},
+    'FANGCHENG':        {'type': 'Disch', 'rain_sens': 1.0, 'fog_sens': 0.5, 'wind_sens': 2.0, 'mkt_sens': 1.2},
+    'ZHANJIANG':        {'type': 'Disch', 'rain_sens': 1.0, 'fog_sens': 0.5, 'wind_sens': 2.0, 'mkt_sens': 1.5},
+    'GUANGZHOU':        {'type': 'Disch', 'rain_sens': 1.0, 'fog_sens': 0.5, 'wind_sens': 1.5, 'mkt_sens': 1.5},
+    'KRISHNAPATNAM':    {'type': 'Disch', 'rain_sens': 2.0, 'fog_sens': 0.2, 'wind_sens': 1.5, 'mkt_sens': 1.0},
+    'MANGALORE':        {'type': 'Disch', 'rain_sens': 2.5, 'fog_sens': 0.2, 'wind_sens': 1.5, 'mkt_sens': 0.8},
     
     # --- OTHERS ---
-    'Gwangyang':        {'type': 'Disch', 'rain_sens': 0.2, 'fog_sens': 0.5, 'wind_sens': 0.5, 'mkt_sens': 0.9},
-    'Teluk Rubiah':     {'type': 'Disch', 'rain_sens': 0.5, 'fog_sens': 0.5, 'wind_sens': 0.5, 'mkt_sens': 0.8},
+    'GWANGYANG':        {'type': 'Disch', 'rain_sens': 0.2, 'fog_sens': 0.5, 'wind_sens': 0.5, 'mkt_sens': 0.9},
+    'TELUK RUBIAH':     {'type': 'Disch', 'rain_sens': 0.5, 'fog_sens': 0.5, 'wind_sens': 0.5, 'mkt_sens': 0.8},
 }
 
 # ==============================================================================
@@ -69,54 +69,55 @@ PORT_CONFIG = {
 
 CLIMATE_DB = {
     # BRAZIL
-    'Ponta da Madeira': {1: [300, 15, 0.0], 7: [50, 20, 0.0]}, 
-    'Tubarao':          {1: [200, 15, 0.0], 7: [40, 18, 0.0]},
-    'Itaguai':          {1: [220, 12, 0.0], 7: [50, 12, 0.0]},
+    'PONTA DA MADEIRA': {1: [300, 15, 0.0], 7: [50, 20, 0.0]}, 
+    'TUBARAO':          {1: [200, 15, 0.0], 7: [40, 18, 0.0]},
+    'ITAGUAI':          {1: [220, 12, 0.0], 7: [50, 12, 0.0]},
 
     # AUSTRALIA
-    'Port Hedland':     {1: [60, 28, 0.0], 7: [5, 15, 0.0]}, 
-    'Dampier':          {1: [55, 26, 0.0], 7: [5, 14, 0.0]},
+    'PORT HEDLAND':     {1: [60, 28, 0.0], 7: [5, 15, 0.0]}, 
+    'DAMPIER':          {1: [55, 26, 0.0], 7: [5, 14, 0.0]},
 
     # CHINA (NORTH - FOGGY)
-    'Qingdao':          {1: [10, 22, 0.35], 7: [150, 18, 0.1]},
-    'Caofeidian':       {1: [8, 24, 0.40],  7: [140, 20, 0.1]},
-    'Tianjin':          {1: [5, 20, 0.35],  7: [160, 15, 0.1]},
-    'Dalian':           {1: [10, 25, 0.30], 7: [150, 20, 0.2]},
-    'Yingkou':          {1: [5, 22, 0.35],  7: [140, 18, 0.1]},
+    'QINGDAO':          {1: [10, 22, 0.35], 7: [150, 18, 0.1]},
+    'CAOFEIDIAN':       {1: [8, 24, 0.40],  7: [140, 20, 0.1]},
+    'TIANJIN':          {1: [5, 20, 0.35],  7: [160, 15, 0.1]},
+    'DALIAN':           {1: [10, 25, 0.30], 7: [150, 20, 0.2]},
+    'YINGKOU':          {1: [5, 22, 0.35],  7: [140, 18, 0.1]},
 
     # CHINA (RIVER - FOGGY WINTER)
-    'Zhangjiagang':     {1: [50, 15, 0.45], 7: [180, 20, 0.1]}, 
-    'Nantong':          {1: [50, 18, 0.40], 7: [170, 22, 0.1]},
-    'Nanjing':          {1: [45, 12, 0.50], 7: [160, 15, 0.1]},
+    'ZHANGJIAGANG':     {1: [50, 15, 0.45], 7: [180, 20, 0.1]}, 
+    'NANTONG':          {1: [50, 18, 0.40], 7: [170, 22, 0.1]},
+    'NANJING':          {1: [45, 12, 0.50], 7: [160, 15, 0.1]},
 
     # CHINA (SOUTH - TYPHOON)
-    'Fangcheng':        {1: [30, 15, 0.0],  8: [400, 30, 0.0]}, 
-    'Zhanjiang':        {1: [20, 15, 0.1],  8: [350, 30, 0.05]},
+    'FANGCHENG':        {1: [30, 15, 0.0],  8: [400, 30, 0.0]}, 
+    'ZHANJIANG':        {1: [20, 15, 0.1],  8: [350, 30, 0.05]},
 
     # INDIA (MONSOON)
-    'Mangalore':        {1: [5, 10, 0.0],   7: [900, 35, 0.0]}, 
-    'Krishnapatnam':    {1: [10, 12, 0.0], 10: [300, 25, 0.0]},
+    'MANGALORE':        {1: [5, 10, 0.0],   7: [900, 35, 0.0]}, 
+    'KRISHNAPATNAM':    {1: [10, 12, 0.0], 10: [300, 25, 0.0]},
 
     # OTHERS
-    'Taboneo':          {1: [350, 15, 0.0], 8: [100, 15, 0.0]}, 
-    'Kamsar':           {1: [0, 10, 0.0],   8: [500, 20, 0.0]}, 
-    'Saldanha Bay':     {1: [5, 30, 0.1],   7: [80, 25, 0.2]}, 
-    'Vancouver':        {1: [200, 15, 0.1], 7: [40, 10, 0.0]}, 
+    'TABONEO':          {1: [350, 15, 0.0], 8: [100, 15, 0.0]}, 
+    'KAMSAR':           {1: [0, 10, 0.0],   8: [500, 20, 0.0]}, 
+    'SALDANHA BAY':     {1: [5, 30, 0.1],   7: [80, 25, 0.2]}, 
+    'VANCOUVER':        {1: [200, 15, 0.1], 7: [40, 10, 0.0]}, 
 }
 
 def get_climate(port, month):
+    port = port.upper()
     # 1. Fallback to generic if port not in DB (e.g., Jingtang uses Caofeidian logic)
     if port not in CLIMATE_DB:
-        # Defaults based on region heuristics
-        if port in ['Jingtang', 'Qinhuangdao', 'Huludao', 'Jinzhou']: 
-            data = CLIMATE_DB['Caofeidian']
-        elif port in ['Jiangyin', 'Yangzhou', 'Changzhou', 'Xinminzhou']: 
-            data = CLIMATE_DB['Zhangjiagang']
-        elif port in ['Rizhao', 'Lianyungang', 'Dongjiakou']: 
-            data = CLIMATE_DB['Qingdao']
-        elif port in ['Guangzhou', 'Qinzhou']:
-            data = CLIMATE_DB['Fangcheng']
-        elif port in ['Ningbo', 'Zhoushan']:
+        # Defaults based on region heuristics (all uppercase)
+        if port in ['JINGTANG', 'QINHUANGDAO', 'HULUDAO', 'JINZHOU']: 
+            data = CLIMATE_DB['CAOFEIDIAN']
+        elif port in ['JIANGYIN', 'YANGZHOU', 'CHANGZHOU', 'XINMINZHOU']: 
+            data = CLIMATE_DB['ZHANGJIAGANG']
+        elif port in ['RIZHAO', 'LIANYUNGANG', 'DONGJIAKOU']: 
+            data = CLIMATE_DB['QINGDAO']
+        elif port in ['GUANGZHOU', 'QINZHOU']:
+            data = CLIMATE_DB['FANGCHENG']
+        elif port in ['NINGBO', 'ZHOUSHAN']:
             data = {1: [50, 18, 0.2], 7: [200, 25, 0.05]} # Mix of rain/wind
         else:
             data = {1: [50, 15, 0.0], 7: [50, 15, 0.0]} # Safe default
@@ -215,7 +216,8 @@ if __name__ == "__main__":
         
         for port in PORT_CONFIG.keys():
             # 1. Generate Environment
-            avg_rain, avg_wind, fog_prob = get_climate(port, month)
+            port_upper = port.upper()
+            avg_rain, avg_wind, fog_prob = get_climate(port_upper, month)
             
             # Add Day-to-Day Weather Volatility
             actual_rain = avg_rain * random.uniform(0.0, 2.5) # Rain is spiky
@@ -223,7 +225,7 @@ if __name__ == "__main__":
             is_fog = True if (random.random() < fog_prob) else False
             
             # 2. Calculate Truth
-            target_delay = calculate_delay(row, port, (actual_rain, actual_wind, is_fog))
+            target_delay = calculate_delay(row, port_upper, (actual_rain, actual_wind, is_fog))
             
             # 3. Create Inputs (Forecasts with Error)
             # The model sees "Forecast", not "Actual"
@@ -232,7 +234,7 @@ if __name__ == "__main__":
             
             training_data.append({
                 'Date': curr_date,
-                'Port': port,
+                'Port': port_upper,
                 'Month': month,
                 'BDI': row['BDI'],
                 'BDI_Inertia': round(row['BDI_Inertia'], 1),
