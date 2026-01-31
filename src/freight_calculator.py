@@ -48,7 +48,7 @@ PORT_ALIASES = {
     "TUBARAO": "TUBARAO",
 
     # common "anchorage" style differences (edit to match your distance file)
-    "KAMSAR ANCHORAGE": "KAMSAR",
+    "PORT KAMSAR": "KAMSAR",
     # if your distance file actually uses "KAMSAR ANCHORAGE", comment above out
     # "KAMSAR": "KAMSAR ANCHORAGE",
 }
@@ -235,6 +235,76 @@ def print_distance_mismatches(vessels, cargoes, dist_lut, title=""):
         print("No distance mismatches found.")
 
 
+def print_missing_port_pairs(vessels, cargoes, dist_lut, title=""):
+    """
+    Prints ONLY the unique missing port pairs (no duplicates).
+    Returns two sets: missing_bal_pairs, missing_lad_pairs
+    """
+    print(f"\n==== MISSING PORT PAIRS: {title} ====")
+    missing_bal = set()  # (from_port, to_port)
+    missing_lad = set()  # (from_port, to_port)
+
+    for v in vessels:
+        for c in cargoes:
+            if not v.position or not c.load_port or not c.discharge_port:
+                continue
+
+            # Check ballast leg
+            a, b = _norm_port(v.position), _norm_port(c.load_port)
+            if (a, b) not in dist_lut and (b, a) not in dist_lut:
+                missing_bal.add((a, b))
+
+            # Check laden leg
+            a2, b2 = _norm_port(c.load_port), _norm_port(c.discharge_port)
+            if (a2, b2) not in dist_lut and (b2, a2) not in dist_lut:
+                missing_lad.add((a2, b2))
+
+    if missing_bal:
+        print(f"\n[BALLAST LEG] {len(missing_bal)} missing pairs:")
+        for frm, to in sorted(missing_bal):
+            print(f"  {frm} -> {to}")
+
+    if missing_lad:
+        print(f"\n[LADEN LEG] {len(missing_lad)} missing pairs:")
+        for frm, to in sorted(missing_lad):
+            print(f"  {frm} -> {to}")
+
+    if not missing_bal and not missing_lad:
+        print("No missing port pairs.")
+
+    return missing_bal, missing_lad
+
+
+def save_missing_pairs_to_excel(all_missing_pairs: dict, output_path: Path):
+    """
+    Save all missing port pairs to an Excel file.
+    all_missing_pairs: dict with keys like "CARGILL x COMMITTED" and values (missing_bal, missing_lad)
+    """
+    rows = []
+    for title, (missing_bal, missing_lad) in all_missing_pairs.items():
+        for frm, to in sorted(missing_bal):
+            rows.append({
+                "Category": title,
+                "Leg_Type": "BALLAST",
+                "From_Port": frm,
+                "To_Port": to,
+                "Distance_NM": ""  # Empty for user to fill in
+            })
+        for frm, to in sorted(missing_lad):
+            rows.append({
+                "Category": title,
+                "Leg_Type": "LADEN",
+                "From_Port": frm,
+                "To_Port": to,
+                "Distance_NM": ""  # Empty for user to fill in
+            })
+    
+    df = pd.DataFrame(rows)
+    df.to_excel(output_path, index=False)
+    print(f"\nSaved {len(rows)} missing port pairs to: {output_path}")
+    return df
+
+
 def print_nan_profit_rows(df: pd.DataFrame, title=""):
     if df is None or len(df) == 0:
         print(f"\n==== NaN PROFIT ROWS: {title} ====\n(no rows)")
@@ -348,6 +418,105 @@ def ffa_5tc_usd_per_day(ffa: pd.DataFrame, dep: pd.Timestamp | None) -> float:
 
 
 # ============================================================
+# Estimate freight rate from FFA 5TC
+# ============================================================
+# Route-based typical voyage days and distances for Panamax/Capesize
+ROUTE_PROFILES = {
+    # (load_region, discharge_region): (typical_voyage_days, typical_cargo_mt)
+    # Australia -> China (C5)
+    ("AUSTRALIA", "CHINA"): (35, 170000),
+    ("DAMPIER", "QINGDAO"): (35, 170000),
+    ("PORT HEDLAND", "QINGDAO"): (35, 170000),
+    ("PORT HEDLAND", "GWANGYANG"): (32, 165000),
+    
+    # Brazil -> China (C3)
+    ("BRAZIL", "CHINA"): (85, 180000),
+    ("TUBARAO", "QINGDAO"): (85, 180000),
+    ("PONTA DA MADEIRA", "QINGDAO"): (90, 190000),
+    ("PONTA DA MADEIRA", "CAOFEIDIAN"): (90, 190000),
+    ("ITAGUAI", "QINGDAO"): (85, 180000),
+    
+    # South Africa -> China
+    ("SOUTH AFRICA", "CHINA"): (55, 180000),
+    ("SALDANHA BAY", "TIANJIN"): (55, 180000),
+    
+    # West Africa -> India/China
+    ("WEST AFRICA", "CHINA"): (75, 175000),
+    ("KAMSAR ANCHORAGE", "QINGDAO"): (75, 175000),
+    ("KAMSAR ANCHORAGE", "MANGALORE"): (45, 175000),
+    
+    # Indonesia -> India
+    ("INDONESIA", "INDIA"): (25, 150000),
+    ("TABONEO", "KRISHNAPATNAM"): (25, 150000),
+    
+    # Canada -> China
+    ("CANADA", "CHINA"): (45, 160000),
+    ("VANCOUVER", "FANGCHENG"): (45, 160000),
+    
+    # Brazil -> Malaysia
+    ("BRAZIL", "MALAYSIA"): (70, 180000),
+    ("TUBARAO", "TELUK RUBIAH"): (70, 180000),
+    
+    # Default fallback
+    ("DEFAULT", "DEFAULT"): (50, 170000),
+}
+
+
+def estimate_freight_from_ffa(
+    ffa: pd.DataFrame,
+    load_port: str,
+    discharge_port: str,
+    cargo_qty: float,
+    dep_date: pd.Timestamp | None = None
+) -> float:
+    """
+    Estimate freight rate ($/MT) from FFA 5TC hire rate.
+    
+    Formula:
+        Freight ($/MT) = (Daily Hire × Voyage Days) / Cargo Quantity
+    
+    This uses route-specific voyage profiles or a default estimate.
+    """
+    # Get 5TC hire rate
+    try:
+        daily_hire = ffa_5tc_usd_per_day(ffa, dep_date)
+    except Exception:
+        daily_hire = 14000  # fallback default
+    
+    # Normalize port names for lookup
+    load_norm = _norm_port(load_port)
+    dis_norm = _norm_port(discharge_port)
+    
+    # Try to find a matching route profile
+    voyage_days = None
+    typical_cargo = None
+    
+    # Direct match
+    if (load_norm, dis_norm) in ROUTE_PROFILES:
+        voyage_days, typical_cargo = ROUTE_PROFILES[(load_norm, dis_norm)]
+    else:
+        # Try regional matching
+        for (load_key, dis_key), (days, cargo) in ROUTE_PROFILES.items():
+            if load_key in load_norm or load_norm in load_key:
+                if dis_key in dis_norm or dis_norm in dis_key:
+                    voyage_days, typical_cargo = days, cargo
+                    break
+    
+    # Use default if no match found
+    if voyage_days is None:
+        voyage_days, typical_cargo = ROUTE_PROFILES[("DEFAULT", "DEFAULT")]
+    
+    # Use actual cargo quantity if available, otherwise typical
+    effective_cargo = cargo_qty if cargo_qty > 0 and not pd.isna(cargo_qty) else typical_cargo
+    
+    # Calculate estimated freight rate
+    # Add a margin for port costs and commissions (typically 5-10%)
+    freight_rate = (daily_hire * voyage_days) / effective_cargo
+    
+    return round(freight_rate, 2)
+
+
+# ============================================================
 # Load vessels (2 rows per vessel: BALLAST + LADEN)
 # ============================================================
 def load_vessels_from_excel(
@@ -445,7 +614,7 @@ def load_vessels_from_excel(
 # ============================================================
 # Load cargoes
 # ============================================================
-def load_cargoes_from_excel(cargo_xlsx: Path, tag: str) -> list[Cargo]:
+def load_cargoes_from_excel(cargo_xlsx: Path, tag: str, ffa: pd.DataFrame | None = None) -> list[Cargo]:
     df = pd.read_excel(cargo_xlsx, sheet_name=0)
 
     df["load_port"] = df["load_port"].map(_norm_port)
@@ -478,6 +647,13 @@ def load_cargoes_from_excel(cargo_xlsx: Path, tag: str) -> list[Cargo]:
 
         qty = float(r["qty_mt"]) if pd.notna(r.get("qty_mt")) else np.nan
         fr = float(r["freight_rate"]) if pd.notna(r.get("freight_rate")) else np.nan
+        
+        # If freight rate is missing, estimate from FFA (if ffa provided)
+        if pd.isna(fr) and ffa is not None:
+            load_p = r.get("load_port", "")
+            dis_p = r.get("discharge_port1", "")
+            dep_date = r.get("earliest_date") if pd.notna(r.get("earliest_date")) else None
+            fr = estimate_freight_from_ffa(ffa, load_p, dis_p, qty, dep_date)
 
         broker = _pct_to_float(r.get("broker_commission"))
         charterer = _pct_to_float(r.get("charterer_commission"))
@@ -485,8 +661,12 @@ def load_cargoes_from_excel(cargo_xlsx: Path, tag: str) -> list[Cargo]:
         load_rate = _num(r.get("loading_rate", 0))
         dis_rate = _num(r.get("discharge_rate", 0))
 
-        load_tt = float(r.get("loading_turn_time_hr", 0) or 0) / 24.0
-        dis_tt = float(r.get("discharge_turn_time_hr", 0) or 0) / 24.0
+        # Handle NaN in turn time values
+        load_tt_raw = r.get("loading_turn_time_hr", 0)
+        load_tt = float(load_tt_raw) / 24.0 if pd.notna(load_tt_raw) and load_tt_raw else 0.0
+        
+        dis_tt_raw = r.get("discharge_turn_time_hr", 0)
+        dis_tt = float(dis_tt_raw) / 24.0 if pd.notna(dis_tt_raw) and dis_tt_raw else 0.0
 
         # total_port_cost should be (load + discharge) already (as you said)
         port_cost_raw = r.get("total_port_cost", 0)
@@ -882,12 +1062,23 @@ if __name__ == "__main__":
 
     # 5) cargoes
     committed = load_cargoes_from_excel(COMMITTED_CARGO_XLSX, tag="COMMITTED")
-    market_cargoes = load_cargoes_from_excel(MARKET_CARGO_XLSX, tag="MARKET")
+    market_cargoes = load_cargoes_from_excel(MARKET_CARGO_XLSX, tag="MARKET", ffa=ffa)
 
-    # print distance mismatches
+    #print distance mismatches
     #print_distance_mismatches(cargill_vessels, committed, dist_lut, "CARGILL x COMMITTED")
     #print_distance_mismatches(market_vessels, committed, dist_lut, "MARKET x COMMITTED")
-    #....print_distance_mismatches(cargill_vessels, market_cargoes, dist_lut, "CARGILL x MARKET")
+    #print_distance_mismatches(cargill_vessels, market_cargoes, dist_lut, "CARGILL x MARKET")
+
+    # print unique missing port pairs only and collect them
+    #all_missing = {}
+    #all_missing["CARGILL x COMMITTED"] = print_missing_port_pairs(cargill_vessels, committed, dist_lut, "CARGILL x COMMITTED")
+    #all_missing["MARKET x COMMITTED"] = print_missing_port_pairs(market_vessels, committed, dist_lut, "MARKET x COMMITTED")
+    #all_missing["CARGILL x MARKET"] = print_missing_port_pairs(cargill_vessels, market_cargoes, dist_lut, "CARGILL x MARKET")
+
+    # Save missing pairs to Excel
+    #OUTPUT_DIR = BASE_DIR / "outputs"
+    #OUTPUT_DIR.mkdir(exist_ok=True)
+    #save_missing_pairs_to_excel(all_missing, OUTPUT_DIR / "missing_port_pairs.xlsx")
 
     # 6) build profit tables (enforce laycan)
     df_cv_cc = build_profit_table(cargill_vessels, committed, dist_lut, pf, bunker_days=1.0, enforce_laycan=True)
@@ -957,15 +1148,16 @@ if __name__ == "__main__":
 
     # 9) Compare alternative discharge ports (TCE with 2% tolerance)
     print("\n==============================")
+    print("\n==============================")
     print("ALTERNATIVE DISCHARGE PORT COMPARISON (2% TCE tolerance)")
     print("==============================")
     alt_port_comparison = compare_alt_discharge_ports(df_cv_cc, tolerance_pct=0.02, show_all=True)
     if len(alt_port_comparison) > 0:
         print(alt_port_comparison.to_string(index=False))
     else:
-        print("No alternative discharge ports to compare.")
+        print("No alternative discharge ports to compare. ")
 
-    # 10) save outputs
+    # 10) save output
     OUT_DIR = BASE_DIR / "outputs"
     OUT_DIR.mkdir(exist_ok=True)
 
@@ -976,3 +1168,5 @@ if __name__ == "__main__":
         alt_port_comparison.to_csv(OUT_DIR / "alt_port_comparison.csv", index=False)
 
     print(f"\nSaved CSV outputs to: {OUT_DIR}")
+
+    
