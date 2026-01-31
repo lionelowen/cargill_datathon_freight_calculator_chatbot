@@ -5,6 +5,12 @@ from datetime import datetime, timedelta
 # Set random seed for reproducibility
 np.random.seed(42)
 
+# Ensure NumPy 2.x compatibility for random number generation
+if hasattr(np.random, 'default_rng'):
+    rng = np.random.default_rng(42)  # NumPy 2.x preferred method
+else:
+    rng = np.random  # Fallback for NumPy 1.x
+
 # 8 routes with distance and multipliers
 routes_info = {
     'australia_china': {'distance_nm': 5400, 'multiplier': 0.8},
@@ -42,7 +48,10 @@ def generate_expanded_data(start_date, end_date, obs_per_route=200):
     date_range = pd.date_range(start=start_date, end=end_date, freq='D')
     
     # Sample dates evenly across the range
-    sample_dates = np.random.choice(date_range, size=obs_per_route, replace=False)
+    if hasattr(rng, 'choice'):
+        sample_dates = rng.choice(date_range, size=obs_per_route, replace=False)
+    else:
+        sample_dates = np.random.choice(date_range, size=obs_per_route, replace=False)
     sample_dates = sorted(sample_dates)
     
     for route_name, route_info in routes_info.items():
@@ -56,19 +65,31 @@ def generate_expanded_data(start_date, end_date, obs_per_route=200):
             # Generate weather with WIDER VARIANCE (10-40%)
             # Add seasonal and random components
             seasonal_factor = np.sin(2 * np.pi * date.dayofyear / 365.0)
-            random_weather_variation = np.random.normal(0, pattern['variance'])
+            if hasattr(rng, 'normal'):
+                random_weather_variation = rng.normal(0, pattern['variance'])
+            else:
+                random_weather_variation = np.random.normal(0, pattern['variance'])
             
             # Base weather + seasonal swing + random variation
             speed_reduction_pct = pattern['base_weather'] + (seasonal_factor * 8) + random_weather_variation
             speed_reduction_pct = np.clip(speed_reduction_pct, 10, 40)  # Constrain to 10-40%
             
             # Generate wave height (more variance)
-            wave_variation = np.random.normal(0, 0.8)
+            if hasattr(rng, 'normal'):
+                wave_variation = rng.normal(0, 0.8)
+                wind_variation = rng.normal(0, 3)
+                random_delay = rng.normal(0, 0.15)
+                fuel_variation = rng.normal(0, 2)
+            else:
+                wave_variation = np.random.normal(0, 0.8)
+                wind_variation = np.random.normal(0, 3) 
+                random_delay = np.random.normal(0, 0.15)
+                fuel_variation = np.random.normal(0, 2)
+            
             significant_wave_height_m = pattern['base_wave'] + (seasonal_factor * 0.5) + wave_variation
             significant_wave_height_m = np.clip(significant_wave_height_m, 0.5, 5.0)
             
             # Generate wind speed (more variance)
-            wind_variation = np.random.normal(0, 3)
             wind_speed_knots = pattern['base_wind'] + (seasonal_factor * 3) + wind_variation
             wind_speed_knots = np.clip(wind_speed_knots, 5, 25)
             
@@ -76,14 +97,13 @@ def generate_expanded_data(start_date, end_date, obs_per_route=200):
             sea_state_code = np.clip(int(2 + significant_wave_height_m), 1, 7)
             
             # Fuel increase correlates with speed reduction
-            fuel_increase_pct = speed_reduction_pct * 0.5 + np.random.normal(0, 2)
+            fuel_increase_pct = speed_reduction_pct * 0.5 + fuel_variation
             fuel_increase_pct = np.clip(fuel_increase_pct, 5, 25)
             
             # Voyage delay calculation
             # Distance effect + weather impact + random variation
             distance_factor = route_info['distance_nm'] / 5000  # Normalize by typical distance
             weather_delay_factor = speed_reduction_pct / 20  # Higher weather = more delay
-            random_delay = np.random.normal(0, 0.15)
             
             voyage_delay_days = (distance_factor * route_info['multiplier'] * weather_delay_factor) + random_delay
             voyage_delay_days = np.clip(voyage_delay_days, 0.1, 3.5)
