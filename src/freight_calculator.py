@@ -589,50 +589,112 @@ def estimate_freight_from_ffa(
     dep_date: pd.Timestamp | None = None
 ) -> float:
     """
-    Estimate freight rate ($/MT) from FFA 5TC hire rate.
+    Estimate freight rate ($/MT) based on FFA TCE rates and route benchmarks.
     
-    Formula:
-        Freight ($/MT) = (Daily Hire × Voyage Days) / Cargo Quantity
+    FFA Routes provide TCE (Time Charter Equivalent = daily revenue after voyage costs):
+    - C3: Tubarao–Qingdao (Brazil to China) - ~$17,000-21,000/day
+    - C5: West Australia–Qingdao - ~$6,600-8,700/day
+    - C7: Bolivar–Rotterdam - ~$10,600-11,800/day
     
-    This uses route-specific voyage profiles or a default estimate.
+    Benchmark freight rates (from committed cargoes):
+    - Brazil -> China: ~$22/MT
+    - Australia -> China: ~$9/MT  
+    - West Africa -> China: ~$23/MT
     """
-    # Get 5TC hire rate
-    try:
-        daily_hire = ffa_5tc_usd_per_day(ffa, dep_date)
-    except Exception:
-        daily_hire = 14000  # fallback default
-    
     # Normalize port names for lookup
     load_norm = _norm_port(load_port)
     dis_norm = _norm_port(discharge_port)
     
-    # Try to find a matching route profile
-    voyage_days = None
-    typical_cargo = None
+    # Route mapping with BENCHMARK FREIGHT RATES ($/MT) based on market data
+    # Format: (route_name, load_keywords, discharge_keywords, base_freight_rate)
+    ROUTE_BENCHMARKS = [
+        # C5: West Australia -> China/Asia (~$9/MT based on BHP committed)
+        ("C5", ["PORT HEDLAND", "DAMPIER", "AUSTRALIA", "WEST AUSTRALIA", "GERALDTON"], 
+         ["QINGDAO", "CHINA", "CAOFEIDIAN", "RIZHAO", "TIANJIN", "LIANYUNGANG", "GWANGYANG", "KOREA"], 9.0),
+        # C3: Brazil -> China (~$22/MT based on CSN committed)
+        ("C3", ["TUBARAO", "ITAGUAI", "PONTA DA MADEIRA", "BRAZIL", "PDM", "TUBARÃO"], 
+         ["QINGDAO", "CHINA", "CAOFEIDIAN", "RIZHAO", "TIANJIN", "TELUK RUBIAH"], 22.0),
+        # West Africa (Guinea) -> China (~$23/MT based on EGA committed)
+        ("WAFR_CHINA", ["KAMSAR", "GUINEA", "CONAKRY", "WEST AFRICA"], 
+         ["QINGDAO", "CHINA", "CAOFEIDIAN", "RIZHAO", "TIANJIN", "MANGALORE", "INDIA"], 23.0),
+        # West Africa -> India (~$18/MT)
+        ("WAFR_INDIA", ["KAMSAR", "GUINEA", "CONAKRY", "WEST AFRICA"], 
+         ["MANGALORE", "INDIA", "PARADIP", "VIZAG", "KRISHNAPATNAM"], 18.0),
+        # South Africa -> China (~$14/MT)
+        ("SAFR_CHINA", ["SALDANHA", "RICHARDS BAY", "SOUTH AFRICA", "DURBAN"], 
+         ["QINGDAO", "CHINA", "CAOFEIDIAN", "RIZHAO", "TIANJIN"], 14.0),
+        # Indonesia -> India (~$10/MT)
+        ("INDO_INDIA", ["TABONEO", "INDONESIA", "KALIMANTAN", "SAMARINDA"], 
+         ["KRISHNAPATNAM", "INDIA", "PARADIP", "VIZAG", "MANGALORE"], 10.0),
+        # Canada/Pacific -> China (~$16/MT)
+        ("PAC_CHINA", ["VANCOUVER", "CANADA", "PACIFIC"], 
+         ["FANGCHENG", "CHINA", "QINGDAO", "CAOFEIDIAN"], 16.0),
+        # C7: South America -> Europe (~$12/MT)
+        ("C7", ["BOLIVAR", "COLOMBIA", "SOUTH AMERICA"], 
+         ["ROTTERDAM", "EUROPE", "AMSTERDAM"], 12.0),
+    ]
     
-    # Direct match
-    if (load_norm, dis_norm) in ROUTE_PROFILES:
-        voyage_days, typical_cargo = ROUTE_PROFILES[(load_norm, dis_norm)]
-    else:
-        # Try regional matching
-        for (load_key, dis_key), (days, cargo) in ROUTE_PROFILES.items():
-            if load_key in load_norm or load_norm in load_key:
-                if dis_key in dis_norm or dis_norm in dis_key:
-                    voyage_days, typical_cargo = days, cargo
-                    break
+    # Try to match route and get benchmark freight rate
+    for route_name, load_keys, dis_keys, base_rate in ROUTE_BENCHMARKS:
+        load_match = any(key in load_norm for key in load_keys)
+        dis_match = any(key in dis_norm for key in dis_keys)
+        if load_match and dis_match:
+            # Adjust rate based on FFA market movement (optional scaling)
+            # Get current FFA rate vs baseline to adjust
+            try:
+                if route_name in ["C3", "C5", "C7"]:
+                    route_row = ffa[ffa["Route"].str.contains(route_name, case=False, na=False)]
+                    if len(route_row) > 0:
+                        row = route_row.iloc[0]
+                        monthly_cols = [c for c in ffa.columns if isinstance(c, pd.Timestamp)]
+                        monthly_cols = sorted(monthly_cols)
+                        
+                        # Get current rate
+                        current_rate = None
+                        if dep_date is not None and pd.notna(dep_date) and monthly_cols:
+                            dep = pd.Timestamp(dep_date)
+                            month_key = pd.Timestamp(dep.year, dep.month, 1)
+                            if month_key in monthly_cols and pd.notna(row[month_key]):
+                                current_rate = float(row[month_key])
+                        
+                        if current_rate is None and monthly_cols:
+                            for c in monthly_cols:
+                                if pd.notna(row[c]):
+                                    current_rate = float(row[c])
+                                    break
+                        
+                        # Scale freight based on FFA movement (baseline rates for reference)
+                        # C3 baseline: ~19,000/day, C5 baseline: ~7,500/day, C7 baseline: ~11,000/day
+                        baseline_tce = {"C3": 19000, "C5": 7500, "C7": 11000}
+                        if current_rate and route_name in baseline_tce:
+                            scale_factor = current_rate / baseline_tce[route_name]
+                            # Apply moderate scaling (cap at +/- 30%)
+                            scale_factor = max(0.7, min(1.3, scale_factor))
+                            adjusted_rate = base_rate * scale_factor
+                            return round(adjusted_rate, 2)
+            except Exception:
+                pass
+            
+            return base_rate
     
-    # Use default if no match found
-    if voyage_days is None:
-        voyage_days, typical_cargo = ROUTE_PROFILES[("DEFAULT", "DEFAULT")]
+    # Fallback: estimate based on distance (rough approximation)
+    # Long haul (Brazil/Africa -> Asia): ~$20/MT
+    # Medium haul (Australia -> Asia): ~$9/MT
+    # Short haul (Intra-Asia): ~$6/MT
     
-    # Use actual cargo quantity if available, otherwise typical
-    effective_cargo = cargo_qty if cargo_qty > 0 and not pd.isna(cargo_qty) else typical_cargo
+    # Check for long-haul routes
+    long_haul_origins = ["BRAZIL", "TUBARAO", "ITAGUAI", "GUINEA", "KAMSAR", "AFRICA", "SALDANHA"]
+    long_haul_dests = ["CHINA", "QINGDAO", "CAOFEIDIAN", "RIZHAO", "TIANJIN"]
     
-    # Calculate estimated freight rate
-    # Add a margin for port costs and commissions (typically 5-10%)
-    freight_rate = (daily_hire * voyage_days) / effective_cargo
+    is_long_origin = any(key in load_norm for key in long_haul_origins)
+    is_long_dest = any(key in dis_norm for key in long_haul_dests)
     
-    return round(freight_rate, 2)
+    if is_long_origin and is_long_dest:
+        return 20.0
+    elif is_long_dest:  # Medium haul to China
+        return 12.0
+    else:  # Default
+        return 10.0
 
 
 # ============================================================
@@ -645,6 +707,7 @@ def load_vessels_from_excel(
     is_market: bool = False,
     ffa: pd.DataFrame | None = None,
     market_hire_multiplier: float = 1.00,
+    avg_cargill_hire: float | None = None,  # Average hire rate from Cargill vessels
 ) -> list[Vessel]:
     df = pd.read_excel(vessel_xlsx, sheet_name=0)
 
@@ -683,9 +746,14 @@ def load_vessels_from_excel(
 
         # daily hire
         if is_market:
-            if ffa is None:
-                raise ValueError("is_market=True requires ffa=load_ffa(...).")
-            hire = ffa_5tc_usd_per_day(ffa, dep if pd.notna(dep) else None) * float(market_hire_multiplier)
+            # Use average of Cargill vessel hire rates for market vessels
+            if avg_cargill_hire is not None:
+                hire = avg_cargill_hire * float(market_hire_multiplier)
+            else:
+                # Fallback to FFA 5TC if no average provided
+                if ffa is None:
+                    raise ValueError("is_market=True requires either avg_cargill_hire or ffa=load_ffa(...).")
+                hire = ffa_5tc_usd_per_day(ffa, dep if pd.notna(dep) else None) * float(market_hire_multiplier)
         else:
             if "hire_rate" in df.columns and pd.notna(first.get("hire_rate", np.nan)):
                 hire = float(first["hire_rate"])
@@ -1002,11 +1070,28 @@ def build_profit_table(
 # ============================================================
 # OPTIMISATION: committed cargo assignment + optional market cargo
 # ============================================================
-def optimal_committed_assignment(df_cv_cc: pd.DataFrame, df_mv_cc: pd.DataFrame) -> tuple[pd.DataFrame, float]:
+def optimal_committed_assignment(
+    df_cv_cc: pd.DataFrame, 
+    df_mv_cc: pd.DataFrame,
+    cargill_vessels: list = None,
+    idle_days: float = 1.0,
+    consider_sunk_cost: bool = True
+) -> tuple[pd.DataFrame, float]:
     """
-    Maximise total P/L for committed cargoes:
-    - each BASE cargo assigned exactly once (can pick any discharge port option)
-    - each vessel used at most once
+    Maximise total P/L for committed cargoes, considering sunk cost for idle Cargill vessels.
+    
+    Logic:
+    - Each BASE cargo assigned exactly once (can pick any discharge port option)
+    - Each vessel used at most once
+    - If consider_sunk_cost=True: Factor in the cost of leaving Cargill vessels idle
+      → Prefer using Cargill vessel even at a loss if loss < idle penalty
+    
+    Args:
+        df_cv_cc: Cargill vessels x Committed cargoes profit table
+        df_mv_cc: Market vessels x Committed cargoes profit table
+        cargill_vessels: List of Cargill Vessel objects (needed for sunk cost calc)
+        idle_days: Number of days to assume for idle penalty calculation
+        consider_sunk_cost: If True, include sunk cost in optimization
     """
     a = df_cv_cc.copy()
     a["vessel_type"] = "CARGILL"
@@ -1016,6 +1101,15 @@ def optimal_committed_assignment(df_cv_cc: pd.DataFrame, df_mv_cc: pd.DataFrame)
 
     if len(cand) == 0:
         raise ValueError("No feasible combos for committed cargoes. Check distances / port matching / laycan filter.")
+
+    # Build Cargill vessel penalty lookup: {vessel_name: idle_cost}
+    cargill_idle_cost = {}
+    if consider_sunk_cost and cargill_vessels:
+        for v in cargill_vessels:
+            # Sunk cost = hire rate * days * (1 - commission)
+            cargill_idle_cost[v.name] = (v.daily_hire * idle_days) * (1 - v.adcoms)
+    
+    all_cargill_names = set(cargill_idle_cost.keys())
 
     # Use base_cargo_id to group alternative ports together
     # Each base cargo should be assigned exactly once (any port option)
@@ -1044,8 +1138,20 @@ def optimal_committed_assignment(df_cv_cc: pd.DataFrame, df_mv_cc: pd.DataFrame)
                 break
             total += float(pl)
 
-        if ok and total > best_total:
-            best_total = total
+        if not ok:
+            continue
+            
+        # Add sunk cost penalty for unused Cargill vessels
+        if consider_sunk_cost:
+            used_cargill = used & all_cargill_names
+            unused_cargill = all_cargill_names - used_cargill
+            sunk_cost_penalty = sum(cargill_idle_cost.get(v, 0) for v in unused_cargill)
+            total_with_sunk = total - sunk_cost_penalty
+        else:
+            total_with_sunk = total
+
+        if total_with_sunk > best_total:
+            best_total = total_with_sunk
             best_choice = choice
 
     assign_df = pd.DataFrame(best_choice)
@@ -1061,12 +1167,17 @@ def optimal_committed_assignment(df_cv_cc: pd.DataFrame, df_mv_cc: pd.DataFrame)
     return assign_df, best_total
 
 
-def assign_market_cargo_to_unused_cargill(df_cv_mc: pd.DataFrame, used_cargill: set[str]) -> tuple[pd.DataFrame, float]:
+def assign_market_cargo_to_unused_cargill(
+    df_cv_mc: pd.DataFrame, 
+    used_cargill: set[str],
+    force_assignment: bool = True
+) -> tuple[pd.DataFrame, float]:
     """
     For each unused Cargill vessel, assign at most 1 market cargo (greedy):
     - choose best profit market cargo for that vessel
     - do not reuse a market cargo
-    - only take if profit_loss > 0
+    - if force_assignment=True: assign even if P/L is negative (vessel must be used)
+    - if force_assignment=False: only assign if P/L > 0
     """
     if df_cv_mc is None or len(df_cv_mc) == 0:
         return pd.DataFrame(), 0.0
@@ -1086,7 +1197,11 @@ def assign_market_cargo_to_unused_cargill(df_cv_mc: pd.DataFrame, used_cargill: 
         for _, r in sub.iterrows():
             if r["cargo"] in used_market_cargo:
                 continue
-            if pd.isna(r["profit_loss"]) or float(r["profit_loss"]) <= 0:
+            if pd.isna(r["profit_loss"]):
+                continue
+            # If force_assignment, take best available even if negative P/L
+            # Otherwise, only take if positive P/L
+            if not force_assignment and float(r["profit_loss"]) <= 0:
                 break
             picked = r
             break
@@ -1196,18 +1311,26 @@ if __name__ == "__main__":
     ffa = load_ffa(FFA_REPORT_XLSX)
 
     # 4) vessels
+    # Load Cargill vessels first
     cargill_vessels = load_vessels_from_excel(
         CARGILL_VESSEL_XLSX,
         speed_mode="economical",
         is_market=False,
         ffa=ffa,
     )
+    
+    # Calculate average Cargill hire rate for market vessels
+    avg_cargill_hire = sum(v.daily_hire for v in cargill_vessels) / len(cargill_vessels) if cargill_vessels else 0
+    print(f"Average Cargill vessel hire rate: ${avg_cargill_hire:,.2f}/day")
+    
+    # Load market vessels using average Cargill hire rate
     market_vessels = load_vessels_from_excel(
         MARKET_VESSEL_XLSX,
         speed_mode="economical",
         is_market=True,
         ffa=ffa,
         market_hire_multiplier=1.00,
+        avg_cargill_hire=avg_cargill_hire,  # Use average of Cargill hire rates
     )
 
     # 5) cargoes
@@ -1253,12 +1376,18 @@ if __name__ == "__main__":
     print_nan_profit_rows(df_cv_mc, "CARGILL x MARKET")
     print_nan_profit_rows(df_mv_cc, "MARKET x COMMITTED")
 
-    # 8) optimal plan
+    # 8) optimal plan (with sunk cost consideration for unused Cargill vessels)
     if len(df_cv_cc) and len(df_mv_cc):
-        commit_plan, commit_total = optimal_committed_assignment(df_cv_cc, df_mv_cc)
+        commit_plan, commit_total = optimal_committed_assignment(
+            df_cv_cc, df_mv_cc, 
+            cargill_vessels=cargill_vessels,
+            idle_days=1.0,
+            consider_sunk_cost=True  # Factor in sunk cost for idle Cargill vessels
+        )
 
         print("\n" + "="*80)
         print("OPTIMAL PLAN: COMMITTED CARGOES (must carry)")
+        print("(Optimized with sunk cost consideration for unused Cargill vessels)")
         print("="*80)
         
         # Print detailed info for each optimal assignment
@@ -1321,11 +1450,13 @@ if __name__ == "__main__":
         print("\nCargill vessels USED for committed cargo:", sorted(used_cargill))
         print("Cargill vessels UNUSED:", unused_cargill)
 
-        # optional: use unused cargill for market cargo
-        market_plan, market_total = assign_market_cargo_to_unused_cargill(df_cv_mc, used_cargill)
+        # FORCE unused Cargill vessels to carry market cargo (they must be used)
+        market_plan, market_total = assign_market_cargo_to_unused_cargill(
+            df_cv_mc, used_cargill, force_assignment=True
+        )
 
         print("\n" + "="*80)
-        print("OPTIONAL UPSIDE: MARKET CARGO ON UNUSED CARGILL VESSELS")
+        print("MARKET CARGO ON UNUSED CARGILL VESSELS (MUST USE)")
         print("="*80)
         if len(market_plan):
             for idx, row in market_plan.iterrows():
@@ -1351,7 +1482,7 @@ if __name__ == "__main__":
                 if 'tce' in row:
                     print(f"  TCE:                  ${row['tce']:,.2f}/day")
         else:
-            print("\nNo profitable market cargo assigned.")
+            print("\nNo market cargo available for unused Cargill vessels.")
 
         print(f"\nMarket cargo total P/L: ${market_total:,.2f}")
 
