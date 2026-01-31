@@ -1049,7 +1049,12 @@ def optimal_committed_assignment(df_cv_cc: pd.DataFrame, df_mv_cc: pd.DataFrame)
             best_choice = choice
 
     assign_df = pd.DataFrame(best_choice)
-    cols = ["base_cargo_id", "cargo", "discharge_port", "vessel_type", "vessel", "profit_loss", "tce", "total_duration", "ballast_nm", "laden_nm", "eta_load"]
+    # Include comprehensive columns for detailed output
+    cols = ["base_cargo_id", "cargo", "discharge_port", "vessel_type", "vessel", 
+            "from_pos", "load_port", "ballast_nm", "laden_nm", 
+            "dur_ballast_days", "dur_laden_days", "total_duration",
+            "loaded_qty", "revenue", "hire_net", "bunker_expense", "misc_expense",
+            "profit_loss", "tce", "bunker_location", "eta_load"]
     cols = [c for c in cols if c in assign_df.columns]
     assign_df = assign_df[cols].sort_values("base_cargo_id").reset_index(drop=True)
 
@@ -1252,12 +1257,62 @@ if __name__ == "__main__":
     if len(df_cv_cc) and len(df_mv_cc):
         commit_plan, commit_total = optimal_committed_assignment(df_cv_cc, df_mv_cc)
 
-        print("\n==============================")
+        print("\n" + "="*80)
         print("OPTIMAL PLAN: COMMITTED CARGOES (must carry)")
-        print("==============================")
-        print(commit_plan)
-        print(f"\n[TEST] Duration for optimal route: {commit_plan['total_duration'].tolist()}")
-        print(f"\nCommitted cargo total P/L: {commit_total:,.2f}")
+        print("="*80)
+        
+        # Print detailed info for each optimal assignment
+        for idx, row in commit_plan.iterrows():
+            print(f"\n{'─'*80}")
+            print(f"ASSIGNMENT {idx+1}: {row['base_cargo_id']}")
+            print(f"{'─'*80}")
+            
+            # Vessel Info
+            print(f"\n  📦 VESSEL INFO:")
+            print(f"     Type:              {row['vessel_type']}")
+            print(f"     Name:              {row['vessel']}")
+            if 'from_pos' in row:
+                print(f"     Start Position:    {row['from_pos']}")
+            
+            # Route Info
+            print(f"\n  🚢 ROUTE INFO:")
+            if 'load_port' in row:
+                print(f"     Load Port:         {row['load_port']}")
+            print(f"     Discharge Port:    {row['discharge_port']}")
+            print(f"     Ballast Distance:  {row['ballast_nm']:,.2f} nm")
+            print(f"     Laden Distance:    {row['laden_nm']:,.2f} nm")
+            print(f"     Total Distance:    {row['ballast_nm'] + row['laden_nm']:,.2f} nm")
+            
+            # Time Info
+            print(f"\n  ⏱️  TIME INFO:")
+            if 'dur_ballast_days' in row:
+                print(f"     Ballast Duration:  {row['dur_ballast_days']:.2f} days")
+            if 'dur_laden_days' in row:
+                print(f"     Laden Duration:    {row['dur_laden_days']:.2f} days")
+            print(f"     Total Duration:    {row['total_duration']:.2f} days")
+            print(f"     ETA at Load Port:  {row['eta_load']}")
+            
+            # Financial Info
+            print(f"\n  💰 FINANCIAL INFO:")
+            if 'loaded_qty' in row:
+                print(f"     Loaded Quantity:   {row['loaded_qty']:,.0f} MT")
+            if 'revenue' in row:
+                print(f"     Revenue:           ${row['revenue']:,.2f}")
+            if 'hire_net' in row:
+                print(f"     Hire Cost (Net):   ${row['hire_net']:,.2f}")
+            if 'bunker_expense' in row:
+                print(f"     Bunker Expense:    ${row['bunker_expense']:,.2f}")
+            if 'misc_expense' in row:
+                print(f"     Misc Expense:      ${row['misc_expense']:,.2f}")
+            print(f"     ─────────────────────────────────")
+            print(f"     PROFIT/LOSS:       ${row['profit_loss']:,.2f}")
+            print(f"     TCE:               ${row['tce']:,.2f}/day")
+            if 'bunker_location' in row:
+                print(f"     Bunker Location:   {row['bunker_location']}")
+        
+        print(f"\n{'='*80}")
+        print(f"COMMITTED CARGO TOTAL P/L: ${commit_total:,.2f}")
+        print(f"{'='*80}")
 
         used_cargill = set(commit_plan.loc[commit_plan["vessel_type"] == "CARGILL", "vessel"].tolist())
         all_cargill = set([v.name for v in cargill_vessels])
@@ -1269,26 +1324,47 @@ if __name__ == "__main__":
         # optional: use unused cargill for market cargo
         market_plan, market_total = assign_market_cargo_to_unused_cargill(df_cv_mc, used_cargill)
 
-        print("\n==============================")
+        print("\n" + "="*80)
         print("OPTIONAL UPSIDE: MARKET CARGO ON UNUSED CARGILL VESSELS")
-        print("==============================")
+        print("="*80)
         if len(market_plan):
-            print(market_plan[["vessel", "cargo", "profit_loss", "total_duration", "ballast_nm", "laden_nm", "eta_load"]])
+            for idx, row in market_plan.iterrows():
+                print(f"\n{'─'*80}")
+                print(f"MARKET CARGO ASSIGNMENT: {row['cargo']}")
+                print(f"{'─'*80}")
+                print(f"  Cargill Vessel:       {row['vessel']}")
+                if 'from_pos' in row:
+                    print(f"  Start Position:       {row['from_pos']}")
+                if 'load_port' in row:
+                    print(f"  Load Port:            {row['load_port']}")
+                if 'discharge_port' in row:
+                    print(f"  Discharge Port:       {row['discharge_port']}")
+                print(f"  Ballast Distance:     {row['ballast_nm']:,.2f} nm")
+                print(f"  Laden Distance:       {row['laden_nm']:,.2f} nm")
+                print(f"  Total Duration:       {row['total_duration']:.2f} days")
+                print(f"  ETA at Load Port:     {row['eta_load']}")
+                if 'revenue' in row:
+                    print(f"  Revenue:              ${row['revenue']:,.2f}")
+                if 'bunker_expense' in row:
+                    print(f"  Bunker Expense:       ${row['bunker_expense']:,.2f}")
+                print(f"  PROFIT/LOSS:          ${row['profit_loss']:,.2f}")
+                if 'tce' in row:
+                    print(f"  TCE:                  ${row['tce']:,.2f}/day")
         else:
-            print("No profitable market cargo assigned.")
+            print("\nNo profitable market cargo assigned.")
 
-        print(f"\nMarket cargo total P/L: {market_total:,.2f}")
+        print(f"\nMarket cargo total P/L: ${market_total:,.2f}")
 
         portfolio_total = commit_total + market_total
-        print("\n==============================")
-        print(f"PORTFOLIO TOTAL P/L: {portfolio_total:,.2f}")
-        print("==============================")
+        print("\n" + "="*80)
+        print(f"PORTFOLIO TOTAL P/L: ${portfolio_total:,.2f}")
+        print("="*80)
 
         # Calculate penalty for unused committed vessels
         penalty = unused_committed_vessel_penalty(cargill_vessels, used_cargill, idle_days=1.0)
         portfolio_total_after_penalty = commit_total + market_total - penalty
-        print(f"\nUnused committed vessel penalty: {penalty:,.2f}")
-        print(f"PORTFOLIO TOTAL P/L (after penalty): {portfolio_total_after_penalty:,.2f}")
+        print(f"\nUnused committed vessel penalty: ${penalty:,.2f}")
+        print(f"PORTFOLIO TOTAL P/L (after penalty): ${portfolio_total_after_penalty:,.2f}")
     else:
         print("\nCannot compute optimal plan (one of the committed tables is empty). Check distances / port matching / laycan filter.")
 
@@ -1312,6 +1388,37 @@ if __name__ == "__main__":
     df_mv_cc.to_csv(OUT_DIR / "marketvs_committed.csv", index=False)
     if len(alt_port_comparison) > 0:
         alt_port_comparison.to_csv(OUT_DIR / "alt_port_comparison.csv", index=False)
+
+    # Save optimal assignments to a single comprehensive file
+    if commit_plan is not None and len(commit_plan) > 0:
+        # Add assignment type column
+        commit_plan_out = commit_plan.copy()
+        commit_plan_out['assignment_type'] = 'Committed Cargo'
+        commit_plan_out['assignment_category'] = commit_plan_out['vessel_type'].apply(
+            lambda x: 'Cargill Vessel → Committed Cargo' if x == 'CARGILL' else 'Market Vessel → Committed Cargo'
+        )
+        
+        # Combine with market cargo assignments if any
+        if market_plan is not None and len(market_plan) > 0:
+            market_plan_out = market_plan.copy()
+            market_plan_out['assignment_type'] = 'Market Cargo'
+            market_plan_out['assignment_category'] = 'Cargill Vessel → Market Cargo'
+            all_assignments = pd.concat([commit_plan_out, market_plan_out], ignore_index=True)
+        else:
+            all_assignments = commit_plan_out
+        
+        # Reorder columns for better readability
+        priority_cols = ['assignment_category', 'assignment_type', 'vessel', 'vessel_type', 'cargo', 
+                        'from_pos', 'load_port', 'discharge_port', 
+                        'ballast_nm', 'laden_nm', 'total_duration',
+                        'eta_load', 'loaded_qty', 'revenue', 'hire_net', 
+                        'bunker_expense', 'misc_expense', 'profit_loss', 'tce', 'bunker_location']
+        existing_cols = [c for c in priority_cols if c in all_assignments.columns]
+        other_cols = [c for c in all_assignments.columns if c not in existing_cols]
+        all_assignments = all_assignments[existing_cols + other_cols]
+        
+        all_assignments.to_csv(OUT_DIR / "optimal_assignments.csv", index=False)
+        print(f"\n✅ Saved OPTIMAL ASSIGNMENTS to: {OUT_DIR / 'optimal_assignments.csv'}")
 
     print(f"\nSaved CSV outputs to: {OUT_DIR}")
 
