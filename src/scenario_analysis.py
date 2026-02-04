@@ -11,17 +11,20 @@ from freight_calculator import (
     load_distance_lookup, load_bunker_prices, load_all_bunker_prices,
     load_ffa, load_vessels_from_excel, load_cargoes_from_excel,
     build_profit_table, optimal_committed_assignment,
+    assign_market_cargo_to_unused_cargill,
     PricesAndFees, Cargo, Vessel, Voyage, calc, dist_nm,
     get_bunker_location_for_port, _norm_port,
     BUNKER_XLSX, CARGILL_VESSEL_XLSX, MARKET_VESSEL_XLSX,
     COMMITTED_CARGO_XLSX, MARKET_CARGO_XLSX, DIST_XLSX, FFA_REPORT_XLSX
 )
+import os
 
 # China ports (discharge ports where delays would apply)
 CHINA_PORTS = {
     "QINGDAO", "SHANGHAI", "TIANJIN", "RIZHAO", "CAOFEIDIAN", 
     "JINGTANG", "FANGCHENG", "XIAMEN", "NINGBO", "LIANYUNGANG",
-    "GUANGZHOU", "DALIAN", "YANTAI"
+    "GUANGZHOU", "DALIAN", "YANTAI", "ZHANGJIAGANG", "NANTONG",
+    "NANJING", "ZHANJIANG", "YINGKOU"
 }
 
 
@@ -29,6 +32,55 @@ def is_china_port(port: str) -> bool:
     """Check if a port is in China"""
     port_norm = _norm_port(port)
     return port_norm in CHINA_PORTS
+
+
+def add_china_delay_to_profit_table(df: pd.DataFrame, extra_delay_days: float) -> pd.DataFrame:
+    """
+    Add extra delay days to voyages with China discharge ports.
+    This modifies the profit_loss, total_duration, hire_net, etc.
+    
+    Args:
+        df: Profit table from build_profit_table
+        extra_delay_days: Additional delay days to add for China ports
+    
+    Returns:
+        Modified DataFrame with adjusted profit/loss for China port delays
+    """
+    if df.empty or extra_delay_days == 0:
+        return df.copy()
+    
+    df = df.copy()
+    
+    for idx, row in df.iterrows():
+        if is_china_port(row["discharge_port"]):
+            # Original values
+            original_duration = row["total_duration"]
+            original_hire_net = row["hire_net"]
+            original_profit = row["profit_loss"]
+            
+            # Calculate hire rate per day (approximate from hire_net / duration)
+            # Note: This is an approximation since hire_net = hire_gross * (1 - adcoms)
+            if original_duration > 0:
+                hire_per_day = original_hire_net / original_duration
+            else:
+                hire_per_day = 0
+            
+            # Additional hire cost due to delay
+            extra_hire_cost = hire_per_day * extra_delay_days
+            
+            # Update values
+            df.at[idx, "total_duration"] = original_duration + extra_delay_days
+            df.at[idx, "hire_net"] = original_hire_net + extra_hire_cost
+            df.at[idx, "profit_loss"] = original_profit - extra_hire_cost
+            
+            # Mark the extra delay
+            if "china_extra_delay" not in df.columns:
+                df["china_extra_delay"] = 0.0
+            df.at[idx, "china_extra_delay"] = extra_delay_days
+    
+    # Re-sort by profit_loss
+    df = df.sort_values("profit_loss", ascending=False).reset_index(drop=True)
+    return df
 
 
 def build_profit_table_with_china_delay(
@@ -190,14 +242,18 @@ def calc_with_delay(v: Vessel, c: Cargo, ballast_nm: float, laden_nm: float,
     }
 
 
-def run_scenario_analysis():
+def run_scenario_analysis(enforce_laycan: bool = False):
     """
     Find the number of additional China port delay days that would make
     the current recommendation no longer optimal.
+    
+    Args:
+        enforce_laycan: Whether to enforce laycan constraints (default False for testing)
     """
-    print("=" * 60)
+    print("=" * 70)
     print("SCENARIO ANALYSIS: China Port Delay Sensitivity")
-    print("=" * 60)
+    print("=" * 70)
+    print(f"\nConfiguration: enforce_laycan = {enforce_laycan}")
     
     # Load data
     dist_lut = load_distance_lookup(DIST_XLSX)
@@ -230,50 +286,85 @@ def run_scenario_analysis():
     )
 
     committed = load_cargoes_from_excel(COMMITTED_CARGO_XLSX, tag="COMMITTED")
+    market_cargoes = load_cargoes_from_excel(MARKET_CARGO_XLSX, tag="MARKET")
+
+    # Identify which cargoes have China discharge ports
+    print("\n--- CARGO ANALYSIS ---")
+    china_cargoes = []
+    non_china_cargoes = []
+    for c in committed:
+        if is_china_port(c.discharge_port):
+            china_cargoes.append(c.name)
+            print(f"  🇨🇳 {c.name}: {c.load_port} → {c.discharge_port} (CHINA)")
+        else:
+            non_china_cargoes.append(c.name)
+            print(f"  🌍 {c.name}: {c.load_port} → {c.discharge_port}")
+    
+    if not china_cargoes:
+        print("\n⚠️  No committed cargoes have China discharge ports!")
+        print("    China port delay analysis will not affect the assignment.")
 
     # Get baseline (0 delay days)
-    print("\n--- BASELINE (0 delay days) ---")
+    print("\n--- BASELINE (0 extra delay days) ---")
     df_cv_cc_base = build_profit_table_with_china_delay(
         cargill_vessels, committed, dist_lut, pf, all_bunker_prices, 
-        china_delay_days=0.0
+        china_delay_days=0.0,
+        enforce_laycan=enforce_laycan
     )
     df_mv_cc_base = build_profit_table_with_china_delay(
         market_vessels, committed, dist_lut, pf, all_bunker_prices, 
-        china_delay_days=0.0
+        china_delay_days=0.0,
+        enforce_laycan=enforce_laycan
     )
     
-    baseline_plan, baseline_total = optimal_committed_assignment(df_cv_cc_base, df_mv_cc_base)
+    # Pass cargill_vessels for sunk cost calculation
+    baseline_plan, baseline_total = optimal_committed_assignment(
+        df_cv_cc_base, df_mv_cc_base, 
+        cargill_vessels=cargill_vessels,
+        consider_sunk_cost=True
+    )
     baseline_vessels = set(baseline_plan["vessel"].tolist())
-    baseline_assignment = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"]) 
+    baseline_assignment = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"], row["vessel_type"]) 
                           for _, row in baseline_plan.iterrows()}
     
-    print(f"Total P/L: ${baseline_total:,.2f}")
+    print(f"Total P/L (with sunk cost): ${baseline_total:,.2f}")
     print("\nOptimal Assignment:")
     for _, row in baseline_plan.iterrows():
-        print(f"  {row['base_cargo_id']}: {row['vessel']} → {row['discharge_port']} (P/L: ${row['profit_loss']:,.2f})")
+        vessel_type = row.get('vessel_type', 'UNKNOWN')
+        china_flag = " 🇨🇳" if is_china_port(row['discharge_port']) else ""
+        print(f"  {row['base_cargo_id']}: [{vessel_type}] {row['vessel']} → {row['discharge_port']}{china_flag} (P/L: ${row['profit_loss']:,.2f})")
 
     # Test increasing delay days
     print("\n--- SENSITIVITY ANALYSIS ---")
     print(f"{'Delay Days':<12} {'Total P/L':>15} {'Change':>12} {'Assignment Changed?':<20}")
-    print("-" * 65)
+    print("-" * 70)
 
     breakeven_delay = None
     previous_plan = baseline_plan.copy()
     previous_assignment = baseline_assignment.copy()
+    
+    # Finer granularity for delay testing
+    delay_values = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20, 25, 30, 40, 50, 75, 100]
 
-    for delay_days in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20, 25, 30, 40, 50]:
+    for delay_days in delay_values:
         df_cv_cc = build_profit_table_with_china_delay(
             cargill_vessels, committed, dist_lut, pf, all_bunker_prices,
-            china_delay_days=delay_days
+            china_delay_days=delay_days,
+            enforce_laycan=enforce_laycan
         )
         df_mv_cc = build_profit_table_with_china_delay(
             market_vessels, committed, dist_lut, pf, all_bunker_prices,
-            china_delay_days=delay_days
+            china_delay_days=delay_days,
+            enforce_laycan=enforce_laycan
         )
         
         try:
-            plan, total = optimal_committed_assignment(df_cv_cc, df_mv_cc)
-            current_assignment = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"]) 
+            plan, total = optimal_committed_assignment(
+                df_cv_cc, df_mv_cc,
+                cargill_vessels=cargill_vessels,
+                consider_sunk_cost=True
+            )
+            current_assignment = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"], row.get("vessel_type", "")) 
                                  for _, row in plan.iterrows()}
             
             change = total - baseline_total
@@ -284,47 +375,82 @@ def run_scenario_analysis():
             
             if assignment_changed and breakeven_delay is None:
                 breakeven_delay = delay_days
-                print(f"\n>>> BREAKEVEN FOUND at {delay_days} delay days! <<<")
-                print("\nNew Assignment:")
-                for _, row in plan.iterrows():
-                    old_vessel, old_port = baseline_assignment.get(row['base_cargo_id'], ('N/A', 'N/A'))
-                    changed = "***" if (row['vessel'], row['discharge_port']) != (old_vessel, old_port) else ""
-                    print(f"  {row['base_cargo_id']}: {row['vessel']} → {row['discharge_port']} {changed}")
+                print(f"\n>>> BREAKEVEN FOUND at {delay_days} extra delay days! <<<")
+                print("\nAssignment Changes:")
+                for cargo_id, (new_vessel, new_port, new_type) in current_assignment.items():
+                    old_vessel, old_port, old_type = baseline_assignment.get(cargo_id, ('N/A', 'N/A', 'N/A'))
+                    if (new_vessel, new_port) != (old_vessel, old_port):
+                        print(f"  {cargo_id}:")
+                        print(f"    BEFORE: [{old_type}] {old_vessel} → {old_port}")
+                        print(f"    AFTER:  [{new_type}] {new_vessel} → {new_port} ***")
+                    else:
+                        print(f"  {cargo_id}: [{new_type}] {new_vessel} → {new_port} (unchanged)")
                 
         except Exception as e:
             print(f"{delay_days:<12} ERROR: {e}")
 
     # Summary
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 70)
     print("SUMMARY")
-    print("=" * 60)
+    print("=" * 70)
     
     if breakeven_delay is not None:
-        print(f"\n🔴 The current recommendation becomes SUB-OPTIMAL at {breakeven_delay} days of China port delay.")
-        print(f"\n   This means if China ports experience {breakeven_delay}+ days of congestion/delay,")
+        print(f"\n🔴 The current recommendation becomes SUB-OPTIMAL at {breakeven_delay} extra days of China port delay.")
+        print(f"\n   This means if China ports experience {breakeven_delay}+ additional days of congestion/delay,")
         print(f"   you should reconsider the vessel-cargo assignment.")
     else:
-        print(f"\n🟢 The current recommendation remains OPTIMAL even with 50+ days of China port delay.")
+        max_delay = delay_values[-1]
+        print(f"\n🟢 The current recommendation remains OPTIMAL even with {max_delay}+ extra days of China port delay.")
         print(f"   The assignment is robust to port congestion scenarios.")
 
     # Calculate cost per delay day
     print("\n--- COST IMPACT PER DELAY DAY ---")
     df_cv_1 = build_profit_table_with_china_delay(
         cargill_vessels, committed, dist_lut, pf, all_bunker_prices,
-        china_delay_days=1.0
+        china_delay_days=1.0,
+        enforce_laycan=enforce_laycan
     )
     df_mv_1 = build_profit_table_with_china_delay(
         market_vessels, committed, dist_lut, pf, all_bunker_prices,
-        china_delay_days=1.0
+        china_delay_days=1.0,
+        enforce_laycan=enforce_laycan
     )
-    _, total_1day = optimal_committed_assignment(df_cv_1, df_mv_1)
+    _, total_1day = optimal_committed_assignment(
+        df_cv_1, df_mv_1,
+        cargill_vessels=cargill_vessels,
+        consider_sunk_cost=True
+    )
     cost_per_day = baseline_total - total_1day
     
     print(f"Each additional day of China port delay costs approximately: ${cost_per_day:,.2f}")
     print(f"This includes: hire cost + port fuel consumption")
+    
+    # Save results to file
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "outputs")
+    os.makedirs(output_dir, exist_ok=True)
+    
+    report_path = os.path.join(output_dir, "scenario_analysis_report.md")
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write("# Scenario Analysis Report: China Port Delay Sensitivity\n\n")
+        f.write(f"## Configuration\n")
+        f.write(f"- Enforce Laycan: {enforce_laycan}\n\n")
+        f.write(f"## Baseline (0 extra delay)\n")
+        f.write(f"- Total P/L: ${baseline_total:,.2f}\n\n")
+        f.write("### Optimal Assignment\n")
+        for cargo_id, (vessel, port, vtype) in baseline_assignment.items():
+            china = " (China)" if is_china_port(port) else ""
+            f.write(f"- {cargo_id}: [{vtype}] {vessel} -> {port}{china}\n")
+        f.write(f"\n## Key Findings\n")
+        if breakeven_delay:
+            f.write(f"- **Tipping Point**: {breakeven_delay} extra days of China port delay\n")
+        else:
+            f.write(f"- **Tipping Point**: Not found (assignment stable up to {delay_values[-1]}+ days)\n")
+        f.write(f"- **Cost per delay day**: ${cost_per_day:,.2f}\n")
+    
+    print(f"\n📄 Report saved to: {report_path}")
 
     return breakeven_delay
 
 
 if __name__ == "__main__":
-    breakeven = run_scenario_analysis()
+    breakeven = run_scenario_analysis(enforce_laycan=False)
