@@ -1382,23 +1382,29 @@ if __name__ == "__main__":
     #OUTPUT_DIR.mkdir(exist_ok=True)
     #save_missing_pairs_to_excel(all_missing, OUTPUT_DIR / "missing_port_pairs.xlsx")
 
-    # 6) build profit tables (enforce laycan) with location-based bunker prices
-    df_cv_cc = build_profit_table(cargill_vessels, committed, dist_lut, pf, bunker_days=1.0, enforce_laycan=True, bunker_prices_by_location=all_bunker_prices)
-    df_cv_mc = build_profit_table(cargill_vessels, market_cargoes, dist_lut, pf, bunker_days=1.0, enforce_laycan=True, bunker_prices_by_location=all_bunker_prices)
-    df_mv_cc = build_profit_table(market_vessels, committed, dist_lut, pf, bunker_days=1.0, enforce_laycan=True, bunker_prices_by_location=all_bunker_prices)
+    # 6) build profit tables (laycan disabled for testing) with location-based bunker prices
+    df_cv_cc = build_profit_table(cargill_vessels, committed, dist_lut, pf, bunker_days=1.0, enforce_laycan=False, bunker_prices_by_location=all_bunker_prices)
+    df_cv_mc = build_profit_table(cargill_vessels, market_cargoes, dist_lut, pf, bunker_days=1.0, enforce_laycan=False, bunker_prices_by_location=all_bunker_prices)
+    df_mv_cc = build_profit_table(market_vessels, committed, dist_lut, pf, bunker_days=1.0, enforce_laycan=False, bunker_prices_by_location=all_bunker_prices)
 
     # 7) print top rows
     print("\n=== Cargill vessels x Committed cargoes (Top 10) ===")
-    print(df_cv_cc.head(10)[["vessel", "cargo", "profit_loss", "origin_port_delay", "destination_port_delay", "total_duration", "ballast_nm", "laden_nm", "eta_load"]]
-          if len(df_cv_cc) else "No rows.")
+    cv_cc_cols = ["vessel", "cargo", "profit_loss", "origin_port_delay", "destination_port_delay", "total_duration", "ballast_nm", "laden_nm"]
+    if "eta_load" in df_cv_cc.columns:
+        cv_cc_cols.append("eta_load")
+    print(df_cv_cc.head(10)[cv_cc_cols] if len(df_cv_cc) else "No rows.")
 
     print("\n=== Cargill vessels x Market cargoes (Top 10) ===")
-    print(df_cv_mc.head(10)[["vessel", "cargo", "profit_loss", "origin_port_delay", "destination_port_delay", "total_duration", "ballast_nm", "laden_nm", "eta_load"]]
-          if len(df_cv_mc) else "No rows.")
+    cv_mc_cols = ["vessel", "cargo", "profit_loss", "origin_port_delay", "destination_port_delay", "total_duration", "ballast_nm", "laden_nm"]
+    if "eta_load" in df_cv_mc.columns:
+        cv_mc_cols.append("eta_load")
+    print(df_cv_mc.head(10)[cv_mc_cols] if len(df_cv_mc) else "No rows.")
 
     print("\n=== Market vessels x Committed cargoes (Top 10) ===")
-    print(df_mv_cc.head(10)[["vessel", "cargo", "profit_loss", "origin_port_delay", "destination_port_delay", "total_duration", "ballast_nm", "laden_nm", "eta_load"]]
-          if len(df_mv_cc) else "No rows.")
+    mv_cc_cols = ["vessel", "cargo", "profit_loss", "origin_port_delay", "destination_port_delay", "total_duration", "ballast_nm", "laden_nm"]
+    if "eta_load" in df_mv_cc.columns:
+        mv_cc_cols.append("eta_load")
+    print(df_mv_cc.head(10)[mv_cc_cols] if len(df_mv_cc) else "No rows.")
 
     # print NaN profit rows
     print_nan_profit_rows(df_cv_cc, "CARGILL x COMMITTED")
@@ -1450,7 +1456,8 @@ if __name__ == "__main__":
             print(f"     Origin Port Delay: {row['origin_port_delay']:.2f} days")
             print(f"     Destination Port Delay: {row['destination_port_delay']:.2f} days")
             print(f"     Total Duration:    {row['total_duration']:.2f} days")
-            print(f"     ETA at Load Port:  {row['eta_load']}")
+            if 'eta_load' in row:
+                print(f"     ETA at Load Port:  {row['eta_load']}")
             
             # Financial Info
             print(f"\n  💰 FINANCIAL INFO:")
@@ -1504,7 +1511,8 @@ if __name__ == "__main__":
                 print(f"  Ballast Distance:     {row['ballast_nm']:,.2f} nm")
                 print(f"  Laden Distance:       {row['laden_nm']:,.2f} nm")
                 print(f"  Total Duration:       {row['total_duration']:.2f} days")
-                print(f"  ETA at Load Port:     {row['eta_load']}")
+                if 'eta_load' in row:
+                    print(f"  ETA at Load Port:     {row['eta_load']}")
                 if 'revenue' in row:
                     print(f"  Revenue:              ${row['revenue']:,.2f}")
                 if 'bunker_expense' in row:
