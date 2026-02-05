@@ -435,11 +435,14 @@ def run_scenario_analysis(enforce_laycan: bool = False):
 
     breakeven_delay = None
     
-    # Finer granularity for delay testing
-    delay_values = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20, 25, 30, 40, 50, 75, 100]
+    # Finer granularity for delay testing (0-20 every day, then larger steps)
+    delay_values = list(range(0, 21)) + [25, 30, 40, 50, 75, 100]
 
     for delay_days in delay_values:
         try:
+            # Debug: confirm we're processing this delay value
+            # print(f"[DEBUG] Processing delay_days = {delay_days}")
+            
             committed_plan, market_plan, committed_total, market_total, penalty, portfolio_total, used_cargill = calculate_full_portfolio(delay_days)
             
             # Track BOTH committed and market cargo assignments

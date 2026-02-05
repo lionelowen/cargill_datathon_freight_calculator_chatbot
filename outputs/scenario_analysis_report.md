@@ -19,5 +19,5 @@
 - MARKET_Teck Resources_Coking Coal_4: OCEAN HORIZON -> FANGCHENG (China)
 
 ## Key Findings
-- **Tipping Point**: 12 extra days of China port delay
+- **Tipping Point**: 11 extra days of China port delay
 - **Cost per delay day**: $76,817.80

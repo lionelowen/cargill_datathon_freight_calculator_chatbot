@@ -991,12 +991,10 @@ def calc(v: Vessel, c: Cargo, voy: Voyage, pf: PricesAndFees, originBDI: int = 2
 
     # Delay at origin port
     originCongestionResult = predict_congestion(originDate, originBDI, c.load_port, scenarioType)
-    print("origin congestion:", originCongestionResult)
     origin_port_delay = originCongestionResult['Predicted_Delay']
     total_duration += origin_port_delay
     # Delay at destination port
     destinationCongestionResult = predict_congestion(destinationDate, endingBDI, c.discharge_port, scenarioType)
-    print("destination congestion:", destinationCongestionResult)
     destination_port_delay = destinationCongestionResult['Predicted_Delay']
     total_duration += destination_port_delay 
 

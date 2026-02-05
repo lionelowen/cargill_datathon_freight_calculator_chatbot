@@ -267,8 +267,9 @@ def run_fuel_price_sensitivity(enforce_laycan: bool = False):
     print("-" * 70)
 
     breakeven_pct = None
-    test_percentages = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90, 100, 
-                        120, 140, 160, 180, 200, 250, 300, 400, 500]
+    # Test percentages: 0% to 100% in reasonable steps
+    test_percentages = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90, 100]
+    max_test_pct = test_percentages[-1]
 
     results = []
     
@@ -401,7 +402,7 @@ def run_fuel_price_sensitivity(enforce_laycan: bool = False):
         print(f"   MGO: ${mgo_price:.2f} → ${breakeven_mgo:.2f}/MT")
         
     else:
-        print(f"\n🟢 The current recommendation remains OPTIMAL even with 500% fuel price increase!")
+        print(f"\n🟢 The current recommendation remains OPTIMAL even with {max_test_pct}% fuel price increase!")
         print("   The assignment is highly robust to fuel price volatility.")
         exact_breakeven = None
 
@@ -415,7 +416,7 @@ def run_fuel_price_sensitivity(enforce_laycan: bool = False):
         print(f"\n   At this point, the optimal vessel-cargo assignment changes.")
         print(f"   Current VLSFO ${vlsfo_price:.2f}/MT would need to reach ${vlsfo_price * (1 + exact_breakeven/100):.2f}/MT")
     else:
-        print(f"\n📊 No breakeven found up to 500% fuel increase.")
+        print(f"\n📊 No breakeven found up to {max_test_pct}% fuel increase.")
         print(f"   The current assignment is robust to extreme fuel price scenarios.")
 
     # Cost sensitivity per 10% increase
@@ -439,4 +440,4 @@ def run_fuel_price_sensitivity(enforce_laycan: bool = False):
 
 
 if __name__ == "__main__":
-    breakeven, results = run_fuel_price_sensitivity(enforce_laycan=False)
+    breakeven, results = run_fuel_price_sensitivity(enforce_laycan=True)
