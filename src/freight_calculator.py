@@ -1366,6 +1366,28 @@ if __name__ == "__main__":
     committed = load_cargoes_from_excel(COMMITTED_CARGO_XLSX, tag="COMMITTED")
     market_cargoes = load_cargoes_from_excel(MARKET_CARGO_XLSX, tag="MARKET", ffa=ffa)
 
+    # DEBUG: Check for missing values in loaded market cargoes
+    print("\n" + "=" * 70)
+    print("DEBUG: Market Cargo Missing Values Check")
+    print("=" * 70)
+    for mc in market_cargoes:
+        issues = []
+        if pd.isna(mc.cargo_qty) or mc.cargo_qty == 0:
+            issues.append(f"cargo_qty={mc.cargo_qty}")
+        if pd.isna(mc.freight) or mc.freight == 0:
+            issues.append(f"freight={mc.freight}")
+        if mc.load_rate == 0:
+            issues.append("load_rate=0")
+        if mc.dis_rate == 0:
+            issues.append("dis_rate=0")
+        if not mc.load_port:
+            issues.append("load_port=empty")
+        if not mc.discharge_port:
+            issues.append("discharge_port=empty")
+        if issues:
+            print(f"  ❌ {mc.name}: {', '.join(issues)}")
+    print("=" * 70 + "\n")
+
     #print distance mismatches
     #print_distance_mismatches(cargill_vessels, committed, dist_lut, "CARGILL x COMMITTED")
     #print_distance_mismatches(market_vessels, committed, dist_lut, "MARKET x COMMITTED")
@@ -1530,11 +1552,25 @@ if __name__ == "__main__":
         print(f"PORTFOLIO TOTAL P/L: ${portfolio_total:,.2f}")
         print("="*80)
 
-        # Calculate penalty for unused committed vessels
-        penalty = unused_committed_vessel_penalty(cargill_vessels, used_cargill, idle_days=1.0)
-        portfolio_total_after_penalty = commit_total + market_total - penalty
-        print(f"\nUnused committed vessel penalty: ${penalty:,.2f}")
-        print(f"PORTFOLIO TOTAL P/L (after penalty): ${portfolio_total_after_penalty:,.2f}")
+        # Update used_cargill to include vessels assigned to market cargo
+        # Penalty only applies to vessels with NO assignment at all
+        if len(market_plan) > 0:
+            used_for_market = set(market_plan["vessel"].tolist())
+            all_used_cargill = used_cargill | used_for_market
+        else:
+            all_used_cargill = used_cargill
+
+        # Calculate penalty only for truly unused committed vessels (no assignment whatsoever)
+        penalty = unused_committed_vessel_penalty(cargill_vessels, all_used_cargill, idle_days=1.0)
+        truly_unused = sorted(set([v.name for v in cargill_vessels]) - all_used_cargill)
+        
+        if penalty > 0:
+            print(f"\nTruly unused Cargill vessels (no assignment): {truly_unused}")
+            print(f"Unused committed vessel penalty: ${penalty:,.2f}")
+            portfolio_total_after_penalty = commit_total + market_total - penalty
+            print(f"PORTFOLIO TOTAL P/L (after penalty): ${portfolio_total_after_penalty:,.2f}")
+        else:
+            print(f"\nAll Cargill vessels assigned — no idle penalty.")
     else:
         print("\nCannot compute optimal plan (one of the committed tables is empty). Check distances / port matching / laycan filter.")
 

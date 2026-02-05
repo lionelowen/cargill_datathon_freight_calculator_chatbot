@@ -177,14 +177,18 @@ def get_all_feasible_assignments(df_cv_cc: pd.DataFrame, df_mv_cc: pd.DataFrame)
     return all_assignments
 
 
-def run_fuel_price_sensitivity():
+def run_fuel_price_sensitivity(enforce_laycan: bool = False):
     """
     Find the fuel price % increase at which the current recommendation
     becomes less profitable than the next best option.
+    
+    Args:
+        enforce_laycan: Whether to enforce laycan constraints (default False for testing)
     """
     print("=" * 70)
     print("SCENARIO ANALYSIS: Fuel Price Sensitivity")
     print("=" * 70)
+    print(f"\nConfiguration: enforce_laycan = {enforce_laycan}")
     
     # Load data
     dist_lut = load_distance_lookup(DIST_XLSX)
@@ -222,11 +226,13 @@ def run_fuel_price_sensitivity():
     print("\n--- BASELINE (0% fuel price increase) ---")
     df_cv_cc_base = build_profit_table_with_fuel_increase(
         cargill_vessels, committed, dist_lut, base_pf, base_bunker_prices, 
-        fuel_increase_pct=0.0
+        fuel_increase_pct=0.0,
+        enforce_laycan=enforce_laycan
     )
     df_mv_cc_base = build_profit_table_with_fuel_increase(
         market_vessels, committed, dist_lut, base_pf, base_bunker_prices, 
-        fuel_increase_pct=0.0
+        fuel_increase_pct=0.0,
+        enforce_laycan=enforce_laycan
     )
     
     # Get all feasible assignments at baseline
@@ -271,11 +277,13 @@ def run_fuel_price_sensitivity():
         
         df_cv_cc = build_profit_table_with_fuel_increase(
             cargill_vessels, committed, dist_lut, base_pf, base_bunker_prices,
-            fuel_increase_pct=increase
+            fuel_increase_pct=increase,
+            enforce_laycan=enforce_laycan
         )
         df_mv_cc = build_profit_table_with_fuel_increase(
             market_vessels, committed, dist_lut, base_pf, base_bunker_prices,
-            fuel_increase_pct=increase
+            fuel_increase_pct=increase,
+            enforce_laycan=enforce_laycan
         )
         
         try:
@@ -337,11 +345,13 @@ def run_fuel_price_sensitivity():
             
             df_cv_cc = build_profit_table_with_fuel_increase(
                 cargill_vessels, committed, dist_lut, base_pf, base_bunker_prices,
-                fuel_increase_pct=increase
+                fuel_increase_pct=increase,
+                enforce_laycan=enforce_laycan
             )
             df_mv_cc = build_profit_table_with_fuel_increase(
                 market_vessels, committed, dist_lut, base_pf, base_bunker_prices,
-                fuel_increase_pct=increase
+                fuel_increase_pct=increase,
+                enforce_laycan=enforce_laycan
             )
             
             all_assignments = get_all_feasible_assignments(df_cv_cc, df_mv_cc)
@@ -365,11 +375,13 @@ def run_fuel_price_sensitivity():
         increase = exact_breakeven / 100.0
         df_cv_cc = build_profit_table_with_fuel_increase(
             cargill_vessels, committed, dist_lut, base_pf, base_bunker_prices,
-            fuel_increase_pct=increase
+            fuel_increase_pct=increase,
+            enforce_laycan=enforce_laycan
         )
         df_mv_cc = build_profit_table_with_fuel_increase(
             market_vessels, committed, dist_lut, base_pf, base_bunker_prices,
-            fuel_increase_pct=increase
+            fuel_increase_pct=increase,
+            enforce_laycan=enforce_laycan
         )
         all_assignments = get_all_feasible_assignments(df_cv_cc, df_mv_cc)
         new_best, new_best_total = all_assignments[0]
@@ -410,11 +422,13 @@ def run_fuel_price_sensitivity():
     print("\n--- Cost Impact per 10% Fuel Increase ---")
     df_cv_10 = build_profit_table_with_fuel_increase(
         cargill_vessels, committed, dist_lut, base_pf, base_bunker_prices,
-        fuel_increase_pct=0.10
+        fuel_increase_pct=0.10,
+        enforce_laycan=enforce_laycan
     )
     df_mv_10 = build_profit_table_with_fuel_increase(
         market_vessels, committed, dist_lut, base_pf, base_bunker_prices,
-        fuel_increase_pct=0.10
+        fuel_increase_pct=0.10,
+        enforce_laycan=enforce_laycan
     )
     _, total_10pct = optimal_committed_assignment(df_cv_10, df_mv_10)
     cost_per_10pct = baseline_total - total_10pct
@@ -425,4 +439,4 @@ def run_fuel_price_sensitivity():
 
 
 if __name__ == "__main__":
-    breakeven, results = run_fuel_price_sensitivity()
+    breakeven, results = run_fuel_price_sensitivity(enforce_laycan=False)

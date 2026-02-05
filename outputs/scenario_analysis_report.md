@@ -1,16 +1,23 @@
 # Scenario Analysis Report: China Port Delay Sensitivity
 
 ## Configuration
-- Enforce Laycan: False
+- Enforce Laycan: True
 
 ## Baseline (0 extra delay)
-- Total P/L: $3,467,139.64
+- Committed Cargo P/L: $1,606,076.68
+- Market Cargo P/L: $1,360,972.99
+- Idle Penalty: $14,245.00
+- **Portfolio Total P/L: $2,952,804.66**
 
-### Optimal Assignment
-- COMMITTED_BHP_Iron Ore_1: [CARGILL] OCEAN HORIZON -> LIANYUNGANG (China)
-- COMMITTED_CSN_Iron Ore_2: [MARKET] IRON CENTURY -> RIZHAO (China)
-- COMMITTED_EGA_Bauxite_0: [MARKET] CORAL EMPEROR -> QINGDAO (China)
+### Committed Cargo Assignment
+- COMMITTED_BHP_Iron Ore_1: [MARKET] PACIFIC VANGUARD -> LIANYUNGANG (China)
+- COMMITTED_CSN_Iron Ore_2: [CARGILL] ANN BELL -> RIZHAO (China)
+- COMMITTED_EGA_Bauxite_0: [MARKET] ZENITH GLORY -> QINGDAO (China)
+
+### Market Cargo Assignment (Cargill Vessels)
+- MARKET_Guinea Alumina Corp_Bauxite_5: GOLDEN ASCENT -> MANGALORE
+- MARKET_Teck Resources_Coking Coal_4: OCEAN HORIZON -> FANGCHENG (China)
 
 ## Key Findings
-- **Tipping Point**: 40 extra days of China port delay
-- **Cost per delay day**: $58,917.93
+- **Tipping Point**: 12 extra days of China port delay
+- **Cost per delay day**: $76,817.80

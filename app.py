@@ -363,9 +363,10 @@ with tab4:
         from freight_calculator import (
             load_distance_lookup, load_bunker_prices, load_all_bunker_prices,
             load_ffa, load_vessels_from_excel, load_cargoes_from_excel,
-            optimal_committed_assignment, PricesAndFees,
+            optimal_committed_assignment, assign_market_cargo_to_unused_cargill,
+            unused_committed_vessel_penalty, PricesAndFees,
             BUNKER_XLSX, CARGILL_VESSEL_XLSX, MARKET_VESSEL_XLSX,
-            COMMITTED_CARGO_XLSX, DIST_XLSX, FFA_REPORT_XLSX
+            COMMITTED_CARGO_XLSX, MARKET_CARGO_XLSX, DIST_XLSX, FFA_REPORT_XLSX
         )
         
         @st.cache_data
@@ -401,32 +402,71 @@ with tab4:
             )
             
             committed = load_cargoes_from_excel(COMMITTED_CARGO_XLSX, tag="COMMITTED")
+            market_cargo = load_cargoes_from_excel(MARKET_CARGO_XLSX, tag="MARKET", ffa=ffa)
             
-            return dist_lut, all_bunker_prices, pf, cargill_vessels, market_vessels, committed
+            return dist_lut, all_bunker_prices, pf, cargill_vessels, market_vessels, committed, market_cargo, ffa
         
         @st.cache_data
-        def run_delay_scenario(_dist_lut, _all_bunker_prices, _pf, _cargill_vessels, _market_vessels, _committed, delay_days):
-            """Run scenario with specific delay days"""
+        def run_delay_scenario(_dist_lut, _all_bunker_prices, _pf, _cargill_vessels, _market_vessels, _committed, _market_cargo, delay_days, enforce_laycan):
+            """Run scenario with specific delay days - returns both committed and market cargo assignments"""
+            # Build profit tables for committed cargo
             df_cv_cc = build_profit_table_with_china_delay(
                 _cargill_vessels, _committed, _dist_lut, _pf, _all_bunker_prices,
-                china_delay_days=delay_days
+                china_delay_days=delay_days,
+                enforce_laycan=enforce_laycan
             )
             df_mv_cc = build_profit_table_with_china_delay(
                 _market_vessels, _committed, _dist_lut, _pf, _all_bunker_prices,
-                china_delay_days=delay_days
+                china_delay_days=delay_days,
+                enforce_laycan=enforce_laycan
             )
             
-            plan, total = optimal_committed_assignment(df_cv_cc, df_mv_cc, _cargill_vessels)
-            return plan, total
+            # Optimal committed assignment
+            committed_plan, committed_total = optimal_committed_assignment(df_cv_cc, df_mv_cc, _cargill_vessels)
+            
+            # Get used Cargill vessels
+            used_cargill = set(committed_plan[committed_plan['vessel_type'] == 'CARGILL']['vessel'].tolist())
+            
+            # Build profit table for market cargo with Cargill vessels
+            df_cv_mc = build_profit_table_with_china_delay(
+                _cargill_vessels, _market_cargo, _dist_lut, _pf, _all_bunker_prices,
+                china_delay_days=delay_days,
+                enforce_laycan=enforce_laycan
+            )
+            
+            # Assign market cargo to unused Cargill vessels
+            market_plan, market_total = assign_market_cargo_to_unused_cargill(df_cv_mc, used_cargill)
+            
+            # Calculate penalty for truly unused vessels
+            if len(market_plan) > 0:
+                used_for_market = set(market_plan["vessel"].tolist())
+                all_used_cargill = used_cargill | used_for_market
+            else:
+                all_used_cargill = used_cargill
+            
+            penalty = unused_committed_vessel_penalty(_cargill_vessels, all_used_cargill, idle_days=1.0)
+            
+            # Full portfolio total
+            portfolio_total = committed_total + market_total - penalty
+            
+            return committed_plan, market_plan, committed_total, market_total, penalty, portfolio_total
         
         # Load data
         with st.spinner("Loading scenario analysis data..."):
-            dist_lut, all_bunker_prices, pf, cargill_vessels, market_vessels, committed = load_scenario_data()
+            dist_lut, all_bunker_prices, pf, cargill_vessels, market_vessels, committed, market_cargo, ffa = load_scenario_data()
         
         # Show China ports info
         with st.expander("ℹ️ China Ports Affected by Delay"):
             st.write("The following discharge ports are considered China ports:")
             st.write(", ".join(sorted(CHINA_PORTS)))
+        
+        # Laycan toggle
+        enforce_laycan_delay = st.checkbox(
+            "Enforce Laycan Constraints",
+            value=False,
+            help="If checked, only consider vessel-cargo combinations that meet the laycan (arrival window) requirements",
+            key="enforce_laycan_delay"
+        )
         
         # Delay slider
         st.subheader("⏱️ Delay Simulation")
@@ -440,60 +480,87 @@ with tab4:
         )
         
         # Run baseline (0 days)
-        baseline_plan, baseline_total = run_delay_scenario(
-            dist_lut, all_bunker_prices, pf, cargill_vessels, market_vessels, committed, 0
+        baseline_committed, baseline_market, baseline_committed_total, baseline_market_total, baseline_penalty, baseline_total = run_delay_scenario(
+            dist_lut, all_bunker_prices, pf, cargill_vessels, market_vessels, committed, market_cargo, 0, enforce_laycan_delay
         )
-        baseline_assignment = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"]) 
-                              for _, row in baseline_plan.iterrows()}
+        baseline_committed_assignment = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"]) 
+                              for _, row in baseline_committed.iterrows()}
+        baseline_market_assignment = {}
+        if len(baseline_market) > 0:
+            baseline_market_assignment = {row["cargo"]: (row["vessel"], row["discharge_port"]) 
+                              for _, row in baseline_market.iterrows()}
         
         # Run current scenario
-        current_plan, current_total = run_delay_scenario(
-            dist_lut, all_bunker_prices, pf, cargill_vessels, market_vessels, committed, delay_days
+        current_committed, current_market, current_committed_total, current_market_total, current_penalty, current_total = run_delay_scenario(
+            dist_lut, all_bunker_prices, pf, cargill_vessels, market_vessels, committed, market_cargo, delay_days, enforce_laycan_delay
         )
-        current_assignment = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"]) 
-                              for _, row in current_plan.iterrows()}
+        current_committed_assignment = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"]) 
+                              for _, row in current_committed.iterrows()}
+        current_market_assignment = {}
+        if len(current_market) > 0:
+            current_market_assignment = {row["cargo"]: (row["vessel"], row["discharge_port"]) 
+                              for _, row in current_market.iterrows()}
         
-        # Display results
-        col1, col2, col3 = st.columns(3)
+        # Display results - Summary metrics
+        st.subheader("📊 Portfolio Summary")
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             st.metric(
-                "Baseline P/L (0 days)", 
+                "Baseline Total P/L", 
                 f"${baseline_total:,.2f}"
             )
         
         with col2:
             change = current_total - baseline_total
             st.metric(
-                f"P/L with {delay_days} delay days",
+                f"Current Total P/L ({delay_days}d)",
                 f"${current_total:,.2f}",
                 delta=f"${change:,.2f}"
             )
         
         with col3:
-            assignment_changed = current_assignment != baseline_assignment
-            if assignment_changed:
+            committed_changed = baseline_committed_assignment != current_committed_assignment
+            market_changed = baseline_market_assignment != current_market_assignment
+            if committed_changed or market_changed:
                 st.error("⚠️ Assignment CHANGED!")
             else:
                 st.success("✅ Assignment unchanged")
         
+        with col4:
+            st.metric("Idle Penalty", f"${current_penalty:,.2f}")
+        
+        # Detailed breakdown
+        st.divider()
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Committed Cargo P/L", f"${current_committed_total:,.2f}", 
+                     delta=f"${current_committed_total - baseline_committed_total:,.2f}")
+        with col2:
+            st.metric("Market Cargo P/L", f"${current_market_total:,.2f}",
+                     delta=f"${current_market_total - baseline_market_total:,.2f}")
+        with col3:
+            st.metric("Penalty Change", f"${current_penalty:,.2f}",
+                     delta=f"${current_penalty - baseline_penalty:,.2f}")
+        
         st.divider()
         
-        # Show assignment comparison
-        st.subheader("📋 Assignment Comparison")
+        # Show assignment comparison - COMMITTED CARGO
+        st.subheader("📦 Committed Cargo Assignment Comparison")
         
         comparison_data = []
-        for cargo_id in baseline_assignment.keys():
-            base_vessel, base_port = baseline_assignment[cargo_id]
-            curr_vessel, curr_port = current_assignment.get(cargo_id, ("N/A", "N/A"))
+        for cargo_id in baseline_committed_assignment.keys():
+            base_vessel, base_port = baseline_committed_assignment[cargo_id]
+            curr_vessel, curr_port = current_committed_assignment.get(cargo_id, ("N/A", "N/A"))
             
             changed = (base_vessel, base_port) != (curr_vessel, curr_port)
             
             # Get P/L for both scenarios
-            base_pl = baseline_plan[baseline_plan['base_cargo_id'] == cargo_id]['profit_loss'].values[0]
-            curr_pl = current_plan[current_plan['base_cargo_id'] == cargo_id]['profit_loss'].values[0]
+            base_pl = baseline_committed[baseline_committed['base_cargo_id'] == cargo_id]['profit_loss'].values[0]
+            curr_pl = current_committed[current_committed['base_cargo_id'] == cargo_id]['profit_loss'].values[0]
             
             comparison_data.append({
+                "Type": "COMMITTED",
                 "Cargo": cargo_id.replace("COMMITTED_", ""),
                 "Baseline Vessel": base_vessel,
                 "Baseline Port": base_port,
@@ -515,46 +582,118 @@ with tab4:
             use_container_width=True
         )
         
+        # Show assignment comparison - MARKET CARGO
+        st.subheader("📦 Market Cargo Assignment Comparison (Unused Cargill Vessels)")
+        
+        if len(baseline_market_assignment) > 0 or len(current_market_assignment) > 0:
+            market_comparison_data = []
+            all_market_cargos = set(baseline_market_assignment.keys()) | set(current_market_assignment.keys())
+            
+            for cargo_id in all_market_cargos:
+                base_vessel, base_port = baseline_market_assignment.get(cargo_id, ("N/A", "N/A"))
+                curr_vessel, curr_port = current_market_assignment.get(cargo_id, ("N/A", "N/A"))
+                
+                changed = (base_vessel, base_port) != (curr_vessel, curr_port)
+                
+                # Get P/L for both scenarios
+                base_pl = 0
+                curr_pl = 0
+                if len(baseline_market) > 0 and cargo_id in baseline_market['cargo'].values:
+                    base_pl = baseline_market[baseline_market['cargo'] == cargo_id]['profit_loss'].values[0]
+                if len(current_market) > 0 and cargo_id in current_market['cargo'].values:
+                    curr_pl = current_market[current_market['cargo'] == cargo_id]['profit_loss'].values[0]
+                
+                market_comparison_data.append({
+                    "Type": "MARKET",
+                    "Cargo": cargo_id.replace("MARKET_", ""),
+                    "Baseline Vessel": base_vessel,
+                    "Baseline Port": base_port,
+                    "Current Vessel": curr_vessel,
+                    "Current Port": curr_port,
+                    "Baseline P/L": base_pl,
+                    "Current P/L": curr_pl,
+                    "P/L Change": curr_pl - base_pl,
+                    "Changed": "🔴 YES" if changed else "✅ No"
+                })
+            
+            market_comparison_df = pd.DataFrame(market_comparison_data)
+            st.dataframe(
+                market_comparison_df.style.format({
+                    'Baseline P/L': '${:,.2f}',
+                    'Current P/L': '${:,.2f}',
+                    'P/L Change': '${:,.2f}'
+                }),
+                use_container_width=True
+            )
+        else:
+            st.info("No market cargo assignments in either scenario")
+        
         st.divider()
         
         # Sensitivity chart
         st.subheader("📊 Sensitivity Analysis")
         
         @st.cache_data
-        def generate_sensitivity_data(_dist_lut, _all_bunker_prices, _pf, _cargill_vessels, _market_vessels, _committed):
-            """Generate data for sensitivity chart"""
-            delays = list(range(0, 31, 2))
-            results = []
+        def generate_sensitivity_data(_dist_lut, _all_bunker_prices, _pf, _cargill_vessels, _market_vessels, _committed, _market_cargo, enforce_laycan):
+            """Generate data for sensitivity chart - uses binary search to find breakeven quickly"""
             
-            base_plan, base_total = run_delay_scenario(
-                _dist_lut, _all_bunker_prices, _pf, _cargill_vessels, _market_vessels, _committed, 0
-            )
-            base_assignment = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"]) 
-                              for _, row in base_plan.iterrows()}
-            
-            for d in delays:
-                plan, total = run_delay_scenario(
-                    _dist_lut, _all_bunker_prices, _pf, _cargill_vessels, _market_vessels, _committed, d
+            def get_assignment_key(delay):
+                """Get assignment key for a given delay"""
+                curr_committed, curr_market, _, _, _, total = run_delay_scenario(
+                    _dist_lut, _all_bunker_prices, _pf, _cargill_vessels, _market_vessels, _committed, _market_cargo, delay, enforce_laycan
                 )
-                curr_assignment = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"]) 
-                                  for _, row in plan.iterrows()}
-                changed = curr_assignment != base_assignment
-                
-                results.append({
-                    "Delay Days": d,
-                    "Total P/L": total,
-                    "Assignment Changed": changed
-                })
+                curr_committed_assignment = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"]) 
+                                  for _, row in curr_committed.iterrows()}
+                curr_market_assignment = {}
+                if len(curr_market) > 0:
+                    curr_market_assignment = {row["cargo"]: (row["vessel"], row["discharge_port"]) 
+                                  for _, row in curr_market.iterrows()}
+                return (frozenset(curr_committed_assignment.items()), frozenset(curr_market_assignment.items())), total
             
-            return pd.DataFrame(results)
+            # Get baseline
+            base_key, base_total = get_assignment_key(0)
+            
+            # Binary search to find breakeven point (where assignment changes)
+            def find_breakeven(low, high, base_key):
+                """Binary search to find exact breakeven point"""
+                if high - low <= 1:
+                    return high if get_assignment_key(high)[0] != base_key else None
+                
+                mid = (low + high) // 2
+                mid_key, _ = get_assignment_key(mid)
+                
+                if mid_key != base_key:
+                    return find_breakeven(low, mid, base_key)
+                else:
+                    return find_breakeven(mid, high, base_key)
+            
+            # Quick check: does assignment change at max delay (30)?
+            max_key, max_total = get_assignment_key(30)
+            breakeven = None
+            if max_key != base_key:
+                breakeven = find_breakeven(0, 30, base_key)
+            
+            # Generate minimal chart data: baseline, breakeven point (if found), and endpoint
+            results = []
+            results.append({"Delay Days": 0, "Total P/L": base_total, "Assignment Changed": False})
+            
+            if breakeven is not None:
+                # Add point just before breakeven
+                if breakeven > 1:
+                    _, pre_total = get_assignment_key(breakeven - 1)
+                    results.append({"Delay Days": breakeven - 1, "Total P/L": pre_total, "Assignment Changed": False})
+                # Add breakeven point
+                _, be_total = get_assignment_key(breakeven)
+                results.append({"Delay Days": breakeven, "Total P/L": be_total, "Assignment Changed": True})
+            
+            # Add endpoint
+            results.append({"Delay Days": 30, "Total P/L": max_total, "Assignment Changed": max_key != base_key})
+            
+            return pd.DataFrame(results), breakeven
         
-        sensitivity_df = generate_sensitivity_data(
-            dist_lut, all_bunker_prices, pf, cargill_vessels, market_vessels, committed
+        sensitivity_df, breakeven = generate_sensitivity_data(
+            dist_lut, all_bunker_prices, pf, cargill_vessels, market_vessels, committed, market_cargo, enforce_laycan_delay
         )
-        
-        # Find breakeven point
-        changed_rows = sensitivity_df[sensitivity_df["Assignment Changed"] == True]
-        breakeven = changed_rows["Delay Days"].min() if len(changed_rows) > 0 else None
         
         # Display chart
         st.line_chart(sensitivity_df.set_index("Delay Days")["Total P/L"])
@@ -622,9 +761,10 @@ with tab5:
         from freight_calculator import (
             load_distance_lookup, load_bunker_prices, load_all_bunker_prices,
             load_ffa, load_vessels_from_excel, load_cargoes_from_excel,
-            optimal_committed_assignment, PricesAndFees, Voyage, calc,
+            optimal_committed_assignment, assign_market_cargo_to_unused_cargill,
+            unused_committed_vessel_penalty, PricesAndFees, Voyage, calc,
             BUNKER_XLSX, CARGILL_VESSEL_XLSX, MARKET_VESSEL_XLSX,
-            COMMITTED_CARGO_XLSX, DIST_XLSX, FFA_REPORT_XLSX
+            COMMITTED_CARGO_XLSX, MARKET_CARGO_XLSX, DIST_XLSX, FFA_REPORT_XLSX
         )
         
         @st.cache_data
@@ -660,27 +800,58 @@ with tab5:
             )
             
             committed = load_cargoes_from_excel(COMMITTED_CARGO_XLSX, tag="COMMITTED")
+            market_cargo = load_cargoes_from_excel(MARKET_CARGO_XLSX, tag="MARKET", ffa=ffa)
             
-            return dist_lut, base_bunker_prices, base_pf, vlsfo_price, mgo_price, cargill_vessels, market_vessels, committed
+            return dist_lut, base_bunker_prices, base_pf, vlsfo_price, mgo_price, cargill_vessels, market_vessels, committed, market_cargo, ffa
         
         @st.cache_data
-        def run_fuel_scenario(_dist_lut, _base_bunker_prices, _base_pf, _cargill_vessels, _market_vessels, _committed, increase_pct):
-            """Run scenario with specific fuel price increase"""
+        def run_fuel_scenario(_dist_lut, _base_bunker_prices, _base_pf, _cargill_vessels, _market_vessels, _committed, _market_cargo, increase_pct, enforce_laycan):
+            """Run scenario with specific fuel price increase - returns both committed and market cargo assignments"""
+            # Build profit tables for committed cargo
             df_cv_cc = build_profit_table_with_fuel_increase(
                 _cargill_vessels, _committed, _dist_lut, _base_pf, _base_bunker_prices,
-                fuel_increase_pct=increase_pct / 100.0
+                fuel_increase_pct=increase_pct / 100.0,
+                enforce_laycan=enforce_laycan
             )
             df_mv_cc = build_profit_table_with_fuel_increase(
                 _market_vessels, _committed, _dist_lut, _base_pf, _base_bunker_prices,
-                fuel_increase_pct=increase_pct / 100.0
+                fuel_increase_pct=increase_pct / 100.0,
+                enforce_laycan=enforce_laycan
             )
             
-            plan, total = optimal_committed_assignment(df_cv_cc, df_mv_cc, _cargill_vessels)
-            return plan, total, df_cv_cc, df_mv_cc
+            # Optimal committed assignment
+            committed_plan, committed_total = optimal_committed_assignment(df_cv_cc, df_mv_cc, _cargill_vessels)
+            
+            # Get used Cargill vessels
+            used_cargill = set(committed_plan[committed_plan['vessel_type'] == 'CARGILL']['vessel'].tolist())
+            
+            # Build profit table for market cargo with Cargill vessels
+            df_cv_mc = build_profit_table_with_fuel_increase(
+                _cargill_vessels, _market_cargo, _dist_lut, _base_pf, _base_bunker_prices,
+                fuel_increase_pct=increase_pct / 100.0,
+                enforce_laycan=enforce_laycan
+            )
+            
+            # Assign market cargo to unused Cargill vessels
+            market_plan, market_total = assign_market_cargo_to_unused_cargill(df_cv_mc, used_cargill)
+            
+            # Calculate penalty for truly unused vessels
+            if len(market_plan) > 0:
+                used_for_market = set(market_plan["vessel"].tolist())
+                all_used_cargill = used_cargill | used_for_market
+            else:
+                all_used_cargill = used_cargill
+            
+            penalty = unused_committed_vessel_penalty(_cargill_vessels, all_used_cargill, idle_days=1.0)
+            
+            # Full portfolio total
+            portfolio_total = committed_total + market_total - penalty
+            
+            return committed_plan, market_plan, committed_total, market_total, penalty, portfolio_total, df_cv_cc, df_mv_cc
         
         # Load data
         with st.spinner("Loading fuel sensitivity data..."):
-            dist_lut, base_bunker_prices, base_pf, vlsfo_price, mgo_price, cargill_vessels, market_vessels, committed = load_fuel_sensitivity_data()
+            dist_lut, base_bunker_prices, base_pf, vlsfo_price, mgo_price, cargill_vessels, market_vessels, committed, market_cargo, ffa = load_fuel_sensitivity_data()
         
         # Show current bunker prices
         with st.expander("ℹ️ Current Bunker Prices by Location"):
@@ -689,17 +860,68 @@ with tab5:
                 price_data.append({"Location": loc, "VLSFO ($/MT)": vlsfo, "MGO ($/MT)": mgo})
             st.dataframe(pd.DataFrame(price_data), use_container_width=True)
         
+        # Laycan toggle
+        enforce_laycan_fuel = st.checkbox(
+            "Enforce Laycan Constraints",
+            value=False,
+            help="If checked, only consider vessel-cargo combinations that meet the laycan (arrival window) requirements",
+            key="enforce_laycan_fuel"
+        )
+        
+        # Pre-calculate breakeven point to set as default slider value
+        @st.cache_data
+        def find_fuel_breakeven(_dist_lut, _base_bunker_prices, _base_pf, _cargill_vessels, _market_vessels, _committed, _market_cargo, enforce_laycan):
+            """Find the fuel price breakeven point using binary search"""
+            def get_assignment_key(pct):
+                curr_committed, curr_market, _, _, _, _, _, _ = run_fuel_scenario(
+                    _dist_lut, _base_bunker_prices, _base_pf, _cargill_vessels, _market_vessels, _committed, _market_cargo, pct, enforce_laycan
+                )
+                curr_committed_assignment = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"]) 
+                                  for _, row in curr_committed.iterrows()}
+                curr_market_assignment = {}
+                if len(curr_market) > 0:
+                    curr_market_assignment = {row["cargo"]: (row["vessel"], row["discharge_port"]) 
+                                  for _, row in curr_market.iterrows()}
+                return (frozenset(curr_committed_assignment.items()), frozenset(curr_market_assignment.items()))
+            
+            base_key = get_assignment_key(0)
+            max_key = get_assignment_key(200)
+            
+            if max_key == base_key:
+                return None  # No breakeven found
+            
+            # Binary search
+            low, high = 0, 200
+            while high - low > 1:
+                mid = (low + high) // 2
+                if get_assignment_key(mid) != base_key:
+                    high = mid
+                else:
+                    low = mid
+            return high
+        
+        # Get breakeven point
+        with st.spinner("Finding tipping point..."):
+            fuel_breakeven_default = find_fuel_breakeven(
+                dist_lut, base_bunker_prices, base_pf, cargill_vessels, market_vessels, committed, market_cargo, enforce_laycan_fuel
+            )
+        
+        # Set default slider value to breakeven if found, otherwise 0
+        default_fuel_value = fuel_breakeven_default if fuel_breakeven_default is not None else 0
+        
         # Fuel price slider
         st.subheader("⛽ Fuel Price Simulation")
         col1, col2 = st.columns(2)
         
         with col1:
+            if fuel_breakeven_default is not None:
+                st.info(f"📍 Slider set to tipping point: **{fuel_breakeven_default}%** (where assignment changes)")
             fuel_increase_pct = st.slider(
                 "Fuel price change (%)",
                 min_value=-50,
                 max_value=200,
-                value=0,
-                step=5,
+                value=default_fuel_value,
+                step=1,
                 help="Simulate fuel price changes. Negative = decrease, Positive = increase"
             )
         
@@ -712,110 +934,161 @@ with tab5:
                      f"{fuel_increase_pct:+.0f}%")
         
         # Run baseline (0%)
-        baseline_plan, baseline_total, _, _ = run_fuel_scenario(
-            dist_lut, base_bunker_prices, base_pf, cargill_vessels, market_vessels, committed, 0
+        baseline_committed, baseline_market, baseline_committed_total, baseline_market_total, baseline_penalty, baseline_total, _, _ = run_fuel_scenario(
+            dist_lut, base_bunker_prices, base_pf, cargill_vessels, market_vessels, committed, market_cargo, 0, enforce_laycan_fuel
         )
-        baseline_assignment = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"]) 
-                              for _, row in baseline_plan.iterrows()}
+        baseline_committed_assignment = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"]) 
+                              for _, row in baseline_committed.iterrows()}
+        baseline_market_assignment = {}
+        if len(baseline_market) > 0:
+            baseline_market_assignment = {row["cargo"]: (row["vessel"], row["discharge_port"]) 
+                              for _, row in baseline_market.iterrows()}
         
         # Run current scenario
-        current_plan, current_total, _, _ = run_fuel_scenario(
-            dist_lut, base_bunker_prices, base_pf, cargill_vessels, market_vessels, committed, fuel_increase_pct
+        current_committed, current_market, current_committed_total, current_market_total, current_penalty, current_total, _, _ = run_fuel_scenario(
+            dist_lut, base_bunker_prices, base_pf, cargill_vessels, market_vessels, committed, market_cargo, fuel_increase_pct, enforce_laycan_fuel
         )
-        current_assignment = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"]) 
-                              for _, row in current_plan.iterrows()}
+        current_committed_assignment = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"]) 
+                              for _, row in current_committed.iterrows()}
+        current_market_assignment = {}
+        if len(current_market) > 0:
+            current_market_assignment = {row["cargo"]: (row["vessel"], row["discharge_port"]) 
+                              for _, row in current_market.iterrows()}
         
-        # Display results
+        # Display results - Summary metrics
         st.divider()
-        col1, col2, col3 = st.columns(3)
+        st.subheader("📊 Portfolio Summary")
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             st.metric(
-                "Baseline P/L (0%)", 
+                "Baseline Total P/L", 
                 f"${baseline_total:,.2f}"
             )
         
         with col2:
             change = current_total - baseline_total
             st.metric(
-                f"P/L at {fuel_increase_pct:+.0f}%",
+                f"Current Total P/L ({fuel_increase_pct:+.0f}%)",
                 f"${current_total:,.2f}",
                 delta=f"${change:,.2f}"
             )
         
         with col3:
-            assignment_changed = current_assignment != baseline_assignment
-            if assignment_changed:
+            committed_changed = baseline_committed_assignment != current_committed_assignment
+            market_changed = baseline_market_assignment != current_market_assignment
+            if committed_changed or market_changed:
                 st.error("⚠️ Assignment CHANGED!")
             else:
                 st.success("✅ Assignment unchanged")
         
+        with col4:
+            st.metric("Idle Penalty", f"${current_penalty:,.2f}")
+        
+        # Detailed breakdown
+        st.divider()
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Committed Cargo P/L", f"${current_committed_total:,.2f}", 
+                     delta=f"${current_committed_total - baseline_committed_total:,.2f}")
+        with col2:
+            st.metric("Market Cargo P/L", f"${current_market_total:,.2f}",
+                     delta=f"${current_market_total - baseline_market_total:,.2f}")
+        with col3:
+            st.metric("Penalty Change", f"${current_penalty:,.2f}",
+                     delta=f"${current_penalty - baseline_penalty:,.2f}")
+        
         st.divider()
         
-        # Show assignment comparison
-        st.subheader("📋 Assignment Comparison")
-        if assignment_changed:
-            st.info("Assignment changed! Showing all optimal assignments for both scenarios.")
-            # Get all optimal assignments for baseline and current
-            baseline_all = get_all_feasible_assignments(_, _)
-            current_all = get_all_feasible_assignments(_, _)
-            # Actually, we need to pass the correct profit tables:
-            # baseline: df_cv_cc, df_mv_cc at 0%
-            # current: df_cv_cc, df_mv_cc at current pct
-            baseline_all = get_all_feasible_assignments(_, _)
-            current_all = get_all_feasible_assignments(_, _)
-            # But we have these as df_cv_cc, df_mv_cc from run_fuel_scenario
-            baseline_all = get_all_feasible_assignments(_, _)
-            current_all = get_all_feasible_assignments(_, _)
-            # Actually, we need to get them from the scenario runs:
-            _, _, baseline_df_cv, baseline_df_mv = run_fuel_scenario(
-                dist_lut, base_bunker_prices, base_pf, cargill_vessels, market_vessels, committed, 0
-            )
-            _, _, current_df_cv, current_df_mv = run_fuel_scenario(
-                dist_lut, base_bunker_prices, base_pf, cargill_vessels, market_vessels, committed, fuel_increase_pct
-            )
-            baseline_all = get_all_feasible_assignments(baseline_df_cv, baseline_df_mv)
-            current_all = get_all_feasible_assignments(current_df_cv, current_df_mv)
-            # Show top 5 for each
-            st.write("**Top 5 Baseline Assignments (0%)**")
-            for i, (assign, pl) in enumerate(baseline_all[:5]):
-                st.write(f"#{i+1} | Total P/L: ${pl:,.2f}")
-                for cargo, v in assign.items():
-                    st.write(f"- {cargo.replace('COMMITTED_', '')}: {v['vessel']} @ {v['discharge_port']}")
-                st.write("")
-            st.write("**Top 5 Current Assignments ({}%)**".format(fuel_increase_pct))
-            for i, (assign, pl) in enumerate(current_all[:5]):
-                st.write(f"#{i+1} | Total P/L: ${pl:,.2f}")
-                for cargo, v in assign.items():
-                    # Highlight if changed from baseline optimal
-                    base_v = baseline_all[0][0][cargo]
-                    changed = "🔴" if (v['vessel'], v['discharge_port']) != (base_v['vessel'], base_v['discharge_port']) else ""
-                    st.write(f"- {cargo.replace('COMMITTED_', '')}: {v['vessel']} @ {v['discharge_port']} {changed}")
-                st.write("")
-        else:
-            # Show single assignment comparison as before
-            comparison_data = []
-            for cargo_id in baseline_assignment.keys():
-                base_vessel, base_port = baseline_assignment[cargo_id]
-                curr_vessel, curr_port = current_assignment.get(cargo_id, ("N/A", "N/A"))
+        # Show assignment comparison - COMMITTED CARGO
+        st.subheader("📦 Committed Cargo Assignment Comparison")
+        
+        comparison_data = []
+        for cargo_id in baseline_committed_assignment.keys():
+            base_vessel, base_port = baseline_committed_assignment[cargo_id]
+            curr_vessel, curr_port = current_committed_assignment.get(cargo_id, ("N/A", "N/A"))
+            
+            changed = (base_vessel, base_port) != (curr_vessel, curr_port)
+            
+            # Get P/L and bunker for both scenarios
+            base_row = baseline_committed[baseline_committed['base_cargo_id'] == cargo_id].iloc[0]
+            curr_row = current_committed[current_committed['base_cargo_id'] == cargo_id].iloc[0]
+            
+            comparison_data.append({
+                "Type": "COMMITTED",
+                "Cargo": cargo_id.replace("COMMITTED_", ""),
+                "Baseline Vessel": base_vessel,
+                "Baseline Port": base_port,
+                "Current Vessel": curr_vessel,
+                "Current Port": curr_port,
+                "Baseline Bunker": base_row['bunker_expense'],
+                "Current Bunker": curr_row['bunker_expense'],
+                "Bunker Change": curr_row['bunker_expense'] - base_row['bunker_expense'],
+                "Baseline P/L": base_row['profit_loss'],
+                "Current P/L": curr_row['profit_loss'],
+                "P/L Change": curr_row['profit_loss'] - base_row['profit_loss'],
+                "Changed": "🔴 YES" if changed else "✅ No"
+            })
+        
+        comparison_df = pd.DataFrame(comparison_data)
+        st.dataframe(
+            comparison_df.style.format({
+                'Baseline Bunker': '${:,.2f}',
+                'Current Bunker': '${:,.2f}',
+                'Bunker Change': '${:,.2f}',
+                'Baseline P/L': '${:,.2f}',
+                'Current P/L': '${:,.2f}',
+                'P/L Change': '${:,.2f}'
+            }),
+            use_container_width=True
+        )
+        
+        # Show assignment comparison - MARKET CARGO
+        st.subheader("📦 Market Cargo Assignment Comparison (Unused Cargill Vessels)")
+        
+        if len(baseline_market_assignment) > 0 or len(current_market_assignment) > 0:
+            market_comparison_data = []
+            all_market_cargos = set(baseline_market_assignment.keys()) | set(current_market_assignment.keys())
+            
+            for cargo_id in all_market_cargos:
+                base_vessel, base_port = baseline_market_assignment.get(cargo_id, ("N/A", "N/A"))
+                curr_vessel, curr_port = current_market_assignment.get(cargo_id, ("N/A", "N/A"))
+                
                 changed = (base_vessel, base_port) != (curr_vessel, curr_port)
-                base_row = baseline_plan[baseline_plan['base_cargo_id'] == cargo_id].iloc[0]
-                curr_row = current_plan[current_plan['base_cargo_id'] == cargo_id].iloc[0]
-                comparison_data.append({
-                    "Cargo": cargo_id.replace("COMMITTED_", ""),
+                
+                # Get P/L and bunker for both scenarios
+                base_pl = 0
+                base_bunker = 0
+                curr_pl = 0
+                curr_bunker = 0
+                if len(baseline_market) > 0 and cargo_id in baseline_market['cargo'].values:
+                    base_row = baseline_market[baseline_market['cargo'] == cargo_id].iloc[0]
+                    base_pl = base_row['profit_loss']
+                    base_bunker = base_row.get('bunker_expense', 0)
+                if len(current_market) > 0 and cargo_id in current_market['cargo'].values:
+                    curr_row = current_market[current_market['cargo'] == cargo_id].iloc[0]
+                    curr_pl = curr_row['profit_loss']
+                    curr_bunker = curr_row.get('bunker_expense', 0)
+                
+                market_comparison_data.append({
+                    "Type": "MARKET",
+                    "Cargo": cargo_id.replace("MARKET_", ""),
                     "Baseline Vessel": base_vessel,
+                    "Baseline Port": base_port,
                     "Current Vessel": curr_vessel,
-                    "Baseline Bunker": base_row['bunker_expense'],
-                    "Current Bunker": curr_row['bunker_expense'],
-                    "Bunker Change": curr_row['bunker_expense'] - base_row['bunker_expense'],
-                    "Baseline P/L": base_row['profit_loss'],
-                    "Current P/L": curr_row['profit_loss'],
-                    "P/L Change": curr_row['profit_loss'] - base_row['profit_loss'],
+                    "Current Port": curr_port,
+                    "Baseline Bunker": base_bunker,
+                    "Current Bunker": curr_bunker,
+                    "Bunker Change": curr_bunker - base_bunker,
+                    "Baseline P/L": base_pl,
+                    "Current P/L": curr_pl,
+                    "P/L Change": curr_pl - base_pl,
                     "Changed": "🔴 YES" if changed else "✅ No"
                 })
-            comparison_df = pd.DataFrame(comparison_data)
+            
+            market_comparison_df = pd.DataFrame(market_comparison_data)
             st.dataframe(
-                comparison_df.style.format({
+                market_comparison_df.style.format({
                     'Baseline Bunker': '${:,.2f}',
                     'Current Bunker': '${:,.2f}',
                     'Bunker Change': '${:,.2f}',
@@ -825,6 +1098,8 @@ with tab5:
                 }),
                 use_container_width=True
             )
+        else:
+            st.info("No market cargo assignments in either scenario")
         
         st.divider()
         
@@ -832,44 +1107,76 @@ with tab5:
         st.subheader("📊 Fuel Price Sensitivity Chart")
         
         @st.cache_data
-        def generate_fuel_sensitivity_data(_dist_lut, _base_bunker_prices, _base_pf, _cargill_vessels, _market_vessels, _committed):
-            """Generate data for fuel sensitivity chart with finer granularity"""
-            # Use 1% steps from 25-40% to catch the exact breakeven point (~31%)
-            percentages = list(range(-50, 25, 10)) + list(range(25, 41, 1)) + list(range(45, 105, 5)) + list(range(110, 205, 10))
-            results = []
+        def generate_fuel_sensitivity_data(_dist_lut, _base_bunker_prices, _base_pf, _cargill_vessels, _market_vessels, _committed, _market_cargo, enforce_laycan):
+            """Generate data for fuel sensitivity chart - uses binary search to find breakeven quickly"""
             
-            base_plan, base_total, _, _ = run_fuel_scenario(
-                _dist_lut, _base_bunker_prices, _base_pf, _cargill_vessels, _market_vessels, _committed, 0
-            )
-            base_assignment = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"]) 
-                              for _, row in base_plan.iterrows()}
-            
-            for pct in percentages:
-                plan, total, _, _ = run_fuel_scenario(
-                    _dist_lut, _base_bunker_prices, _base_pf, _cargill_vessels, _market_vessels, _committed, pct
+            def get_scenario_data(pct):
+                """Get assignment key and totals for a given fuel % change"""
+                curr_committed, curr_market, _, _, _, total, _, _ = run_fuel_scenario(
+                    _dist_lut, _base_bunker_prices, _base_pf, _cargill_vessels, _market_vessels, _committed, _market_cargo, pct, enforce_laycan
                 )
-                curr_assignment = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"]) 
-                                  for _, row in plan.iterrows()}
-                changed = curr_assignment != base_assignment
+                curr_committed_assignment = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"]) 
+                                  for _, row in curr_committed.iterrows()}
+                curr_market_assignment = {}
+                if len(curr_market) > 0:
+                    curr_market_assignment = {row["cargo"]: (row["vessel"], row["discharge_port"]) 
+                                  for _, row in curr_market.iterrows()}
                 
-                total_bunker = plan['bunker_expense'].sum()
+                total_bunker = curr_committed['bunker_expense'].sum()
+                if len(curr_market) > 0 and 'bunker_expense' in curr_market.columns:
+                    total_bunker += curr_market['bunker_expense'].sum()
                 
-                results.append({
-                    "Fuel Change (%)": pct,
-                    "Total P/L": total,
-                    "Total Bunker Cost": total_bunker,
-                    "Assignment Changed": changed
-                })
+                key = (frozenset(curr_committed_assignment.items()), frozenset(curr_market_assignment.items()))
+                return key, total, total_bunker
             
-            return pd.DataFrame(results)
+            # Get baseline (0%)
+            base_key, base_total, base_bunker = get_scenario_data(0)
+            
+            # Binary search to find breakeven point (where assignment changes)
+            def find_breakeven(low, high, base_key):
+                """Binary search to find exact breakeven point"""
+                if high - low <= 1:
+                    return high if get_scenario_data(high)[0] != base_key else None
+                
+                mid = (low + high) // 2
+                mid_key, _, _ = get_scenario_data(mid)
+                
+                if mid_key != base_key:
+                    return find_breakeven(low, mid, base_key)
+                else:
+                    return find_breakeven(mid, high, base_key)
+            
+            # Quick check: does assignment change at max fuel increase (200%)?
+            max_key, max_total, max_bunker = get_scenario_data(200)
+            breakeven = None
+            if max_key != base_key:
+                breakeven = find_breakeven(0, 200, base_key)
+            
+            # Generate minimal chart data: baseline, key points, breakeven, and endpoint
+            results = []
+            results.append({"Fuel Change (%)": -50, "Total P/L": get_scenario_data(-50)[1], "Total Bunker Cost": get_scenario_data(-50)[2], "Assignment Changed": False})
+            results.append({"Fuel Change (%)": 0, "Total P/L": base_total, "Total Bunker Cost": base_bunker, "Assignment Changed": False})
+            
+            if breakeven is not None:
+                # Add point just before breakeven
+                if breakeven > 1:
+                    _, pre_total, pre_bunker = get_scenario_data(breakeven - 1)
+                    results.append({"Fuel Change (%)": breakeven - 1, "Total P/L": pre_total, "Total Bunker Cost": pre_bunker, "Assignment Changed": False})
+                # Add breakeven point
+                _, be_total, be_bunker = get_scenario_data(breakeven)
+                results.append({"Fuel Change (%)": breakeven, "Total P/L": be_total, "Total Bunker Cost": be_bunker, "Assignment Changed": True})
+            
+            # Add endpoint
+            results.append({"Fuel Change (%)": 200, "Total P/L": max_total, "Total Bunker Cost": max_bunker, "Assignment Changed": max_key != base_key})
+            
+            # Sort by fuel change %
+            results = sorted(results, key=lambda x: x["Fuel Change (%)"])
+            
+            return pd.DataFrame(results), breakeven
         
-        fuel_sensitivity_df = generate_fuel_sensitivity_data(
-            dist_lut, base_bunker_prices, base_pf, cargill_vessels, market_vessels, committed
+        fuel_sensitivity_df, fuel_breakeven = generate_fuel_sensitivity_data(
+            dist_lut, base_bunker_prices, base_pf, cargill_vessels, market_vessels, committed, market_cargo, enforce_laycan_fuel
         )
-        
-        # Find breakeven point
-        changed_rows = fuel_sensitivity_df[fuel_sensitivity_df["Assignment Changed"] == True]
-        fuel_breakeven = changed_rows["Fuel Change (%)"].min() if len(changed_rows) > 0 else None
         
         # Display P/L chart with breakeven marker
         col1, col2 = st.columns(2)
@@ -931,27 +1238,48 @@ with tab5:
             st.divider()
             st.subheader("🔀 What Changes at the Tipping Point?")
             # Get baseline assignment (vessel, port)
-            baseline_plan_bp, _, _, _ = run_fuel_scenario(
-                dist_lut, base_bunker_prices, base_pf, cargill_vessels, market_vessels, committed, 0
+            baseline_committed_bp, baseline_market_bp, _, _, _, _, _, _ = run_fuel_scenario(
+                dist_lut, base_bunker_prices, base_pf, cargill_vessels, market_vessels, committed, market_cargo, 0, enforce_laycan_fuel
             )
-            baseline_assignment_bp = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"]) for _, row in baseline_plan_bp.iterrows()}
+            baseline_committed_assignment_bp = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"]) for _, row in baseline_committed_bp.iterrows()}
+            baseline_market_assignment_bp = {}
+            if len(baseline_market_bp) > 0:
+                baseline_market_assignment_bp = {row["cargo"]: (row["vessel"], row["discharge_port"]) for _, row in baseline_market_bp.iterrows()}
+            
             # Get assignment at breakeven (vessel, port)
-            breakeven_plan, _, _, _ = run_fuel_scenario(
-                dist_lut, base_bunker_prices, base_pf, cargill_vessels, market_vessels, committed, fuel_breakeven
+            breakeven_committed, breakeven_market, _, _, _, _, _, _ = run_fuel_scenario(
+                dist_lut, base_bunker_prices, base_pf, cargill_vessels, market_vessels, committed, market_cargo, fuel_breakeven, enforce_laycan_fuel
             )
-            breakeven_assignment = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"]) for _, row in breakeven_plan.iterrows()}
+            breakeven_committed_assignment = {row["base_cargo_id"]: (row["vessel"], row["discharge_port"]) for _, row in breakeven_committed.iterrows()}
+            breakeven_market_assignment = {}
+            if len(breakeven_market) > 0:
+                breakeven_market_assignment = {row["cargo"]: (row["vessel"], row["discharge_port"]) for _, row in breakeven_market.iterrows()}
+            
             col1, col2 = st.columns(2)
             with col1:
                 st.write("**Before Tipping Point (0%)**")
-                for cargo, (vessel, port) in baseline_assignment_bp.items():
+                st.write("*Committed Cargo:*")
+                for cargo, (vessel, port) in baseline_committed_assignment_bp.items():
                     cargo_short = cargo.replace("COMMITTED_", "")
                     st.write(f"• {cargo_short} → **{vessel}** @ {port}")
+                if baseline_market_assignment_bp:
+                    st.write("*Market Cargo:*")
+                    for cargo, (vessel, port) in baseline_market_assignment_bp.items():
+                        cargo_short = cargo.replace("MARKET_", "")
+                        st.write(f"• {cargo_short} → **{vessel}** @ {port}")
             with col2:
                 st.write(f"**At Tipping Point ({fuel_breakeven}%)**")
-                for cargo, (vessel, port) in breakeven_assignment.items():
+                st.write("*Committed Cargo:*")
+                for cargo, (vessel, port) in breakeven_committed_assignment.items():
                     cargo_short = cargo.replace("COMMITTED_", "")
-                    changed = "🔴" if baseline_assignment_bp.get(cargo) != (vessel, port) else ""
+                    changed = "🔴" if baseline_committed_assignment_bp.get(cargo) != (vessel, port) else ""
                     st.write(f"• {cargo_short} → **{vessel}** @ {port} {changed}")
+                if breakeven_market_assignment:
+                    st.write("*Market Cargo:*")
+                    for cargo, (vessel, port) in breakeven_market_assignment.items():
+                        cargo_short = cargo.replace("MARKET_", "")
+                        changed = "🔴" if baseline_market_assignment_bp.get(cargo) != (vessel, port) else ""
+                        st.write(f"• {cargo_short} → **{vessel}** @ {port} {changed}")
             st.markdown("""
             ---
             **Why does the assignment change?**
